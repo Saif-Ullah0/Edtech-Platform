@@ -18,10 +18,13 @@ model User {
 }
 
 model Category {
-  id    String   @id @default(cuid())
-  name  String
-  slug  String   @unique
-  courses Course[]
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  courses     Course[]
 }
 
 model Course {
