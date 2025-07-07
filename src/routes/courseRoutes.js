@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getCourses, getCourseById } = require('../controllers/courseController');
+const requireAuth = require('../middlewares/requireAuth');
+const courseController = require('../controllers/courseController');
 
-router.get('/', getCourses);
-router.get('/:id', getCourseById);
+router.get('/', courseController.getCourses);
+
+router.get('/:id', courseController.getCourseById);
 
 module.exports = router;

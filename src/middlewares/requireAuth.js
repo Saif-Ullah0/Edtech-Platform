@@ -1,7 +1,7 @@
 const jwt = require('../utils/jwt');
 
 const requireAuth = (req, res, next) => {
-        console.log('All cookies:', req.cookies); // 👈 Add this
+        console.log('All cookies:', req.cookies); 
 
     const token = req.cookies.token;
     if (!token) {
@@ -15,7 +15,7 @@ const requireAuth = (req, res, next) => {
 
         next(); 
     } catch (error) {
-                console.error("JWT ERROR:", error.message); // 👈 Log error message
+                console.error("JWT ERROR:", error.message);
 
         return res.status(401).json({ error: 'Invalid or expired token' });
     }
