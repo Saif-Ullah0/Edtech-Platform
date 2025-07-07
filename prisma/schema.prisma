@@ -8,50 +8,50 @@ datasource db {
 }
 
 model User {
-  id        String     @id @default(cuid())
+  id        Int       @id @default(autoincrement())
   name      String
-  email     String     @unique
+  email     String    @unique
   password  String
-  role      Role       @default(USER)
+  role      Role      @default(USER)
   courses   Enrollment[]
-  createdAt DateTime   @default(now())
+  createdAt DateTime  @default(now())
 }
 
 model Category {
-  id          String   @id @default(cuid())
+  id          Int       @id @default(autoincrement())
   name        String
-  slug        String   @unique
+  slug        String    @unique
   description String?
   imageUrl    String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
   courses     Course[]
 }
 
 model Course {
-  id          String    @id @default(cuid())
-  title       String
+  id          Int       @id @default(autoincrement())
+  title       String    @unique
   description String
   price       Float
   category    Category  @relation(fields: [categoryId], references: [id])
-  categoryId  String
+  categoryId  Int
   modules     Module[]
   enrollments Enrollment[]
 }
 
 model Module {
-  id       String   @id @default(cuid())
+  id       Int      @id @default(autoincrement())
   title    String
   content  String
   course   Course   @relation(fields: [courseId], references: [id])
-  courseId String
+  courseId Int
 }
 
 model Enrollment {
-  id        String   @id @default(cuid())
+  id        Int      @id @default(autoincrement())
   user      User     @relation(fields: [userId], references: [id])
-  userId    String
+  userId    Int
   course    Course   @relation(fields: [courseId], references: [id])
-  courseId  String
+  courseId  Int
   createdAt DateTime @default(now())
 }
 

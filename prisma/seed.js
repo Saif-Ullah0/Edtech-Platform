@@ -1,40 +1,25 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcrypt');
 const prisma = new PrismaClient();
 
 async function main() {
-  // Create categories
-  const categories = await prisma.category.createMany({
-    data: [
-      {
-        name: 'Web Development',
-        slug: 'web-dev',
-        description: 'Learn to build websites',
-        imageUrl: 'https://example.com/web.jpg',
-      },
-      {
-        name: 'Graphic Design',
-        slug: 'design',
-        description: 'Design with Adobe tools',
-        imageUrl: 'https://example.com/design.jpg',
-      },
-      {
-        name: 'Data Science',
-        slug: 'data-science',
-        description: 'Analyze and visualize data',
-        imageUrl: 'https://example.com/data.jpg',
-      },
-    ],
-    skipDuplicates: true, // avoids unique constraint errors
-  });
-
-  // Fetch Web Dev category to create course under it
-  const webDev = await prisma.category.findUnique({
+  // 1. Create or update category
+  const webDev = await prisma.category.upsert({
     where: { slug: 'web-dev' },
+    update: {},
+    create: {
+      name: 'Web Development',
+      slug: 'web-dev',
+      description: 'Learn to build websites',
+      imageUrl: 'https://example.com/web.jpg',
+    },
   });
 
-  // Create a course
-  const course = await prisma.course.create({
-    data: {
+  // 2. Create a course under Web Dev
+  const course = await prisma.course.upsert({
+    where: { title: 'Learn Node.js' },
+    update: {},
+    create: {
       title: 'Learn Node.js',
       price: 29.99,
       description: 'Backend development using Node.js and Express',
@@ -42,7 +27,9 @@ async function main() {
     },
   });
 
-  // Create modules
+  // 3. Create modules (first delete to avoid duplicates)
+  await prisma.module.deleteMany({ where: { courseId: course.id } });
+
   await prisma.module.createMany({
     data: [
       {
@@ -58,33 +45,39 @@ async function main() {
     ],
   });
 
-  // Create a dummy user
+  // 4. Create or update user
+  const hashedPassword = await bcrypt.hash('dummy-password', 10);
   const user = await prisma.user.upsert({
-  where: { email: 'demo@example.com' },
-  update: {}, // nothing to update if it already exists
-  create: {
-    name: 'Demo User',
-    email: 'demo@example.com',
-    password: 'dummy-password', // in real app, hash it
-    role: 'USER',
-  },
-});
-
-
-  // Enroll user in course
-  await prisma.enrollment.create({
-    data: {
-      userId: user.id,
-      courseId: course.id,
+    where: { email: 'demo@example.com' },
+    update: { name: 'Demo User', password: hashedPassword },
+    create: {
+      name: 'Demo User',
+      email: 'demo@example.com',
+      password: hashedPassword,
+      role: 'USER',
     },
   });
+
+  // 5. Enroll user in course (only if not already enrolled)
+  const isAlreadyEnrolled = await prisma.enrollment.findFirst({
+    where: { userId: user.id, courseId: course.id },
+  });
+
+  if (!isAlreadyEnrolled) {
+    await prisma.enrollment.create({
+      data: {
+        userId: user.id,
+        courseId: course.id,
+      },
+    });
+  }
 
   console.log('✅ Seed data created!');
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error('❌ Seeding failed:', e);
     process.exit(1);
   })
   .finally(async () => {
