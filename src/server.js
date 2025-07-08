@@ -17,6 +17,11 @@ const webhookRoutes = require('./routes/webhookRoutes');
 
 const requireAuth = require('./middlewares/requireAuth');
 const requireAdmin = require('./middlewares/requireAdmin');
+const adminModuleRoutes = require('./routes/admin/moduleAdminRoutes');
+const adminDashboardRoutes = require('./routes/admin/dashboardAdminRoutes');
+const adminEnrollmentRoutes = require('./routes/admin/enrollmentAdminRoutes');
+const adminUserRoutes = require('./routes/admin/userAdminRoutes');
+
 
 const app = express();
 
@@ -39,6 +44,11 @@ app.use('/api/payment', paymentRoutes);
 
 app.use('/api/admin/categories', requireAuth, requireAdmin, adminCategoryRoutes);
 app.use('/api/admin/courses', requireAuth, requireAdmin, adminCourseRoutes);
+app.use('/api/admin/modules', requireAuth, requireAdmin, adminModuleRoutes);
+app.use('/api/admin/dashboard', requireAuth, requireAdmin, adminDashboardRoutes);
+app.use('/api/admin/enrollments', requireAuth, requireAdmin, adminEnrollmentRoutes);
+app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
+
 
 app.get('/', (req, res) => {
   res.send('Backend is running');
