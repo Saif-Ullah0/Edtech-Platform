@@ -21,15 +21,19 @@ const adminModuleRoutes = require('./routes/admin/moduleAdminRoutes');
 const adminDashboardRoutes = require('./routes/admin/dashboardAdminRoutes');
 const adminEnrollmentRoutes = require('./routes/admin/enrollmentAdminRoutes');
 const adminUserRoutes = require('./routes/admin/userAdminRoutes');
+const orderRoutes = require("./routes/orderRoutes");
+const startOrderCleanupJob = require('./cron/orderCleanupJob');
+startOrderCleanupJob();
 
 
 const app = express();
+app.use('/webhook', webhookRoutes); 
 
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true,
 }));
-app.use('/webhook', webhookRoutes); 
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -48,6 +52,7 @@ app.use('/api/admin/modules', requireAuth, requireAdmin, adminModuleRoutes);
 app.use('/api/admin/dashboard', requireAuth, requireAdmin, adminDashboardRoutes);
 app.use('/api/admin/enrollments', requireAuth, requireAdmin, adminEnrollmentRoutes);
 app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
+app.use("/api/order", orderRoutes);
 
 
 app.get('/', (req, res) => {

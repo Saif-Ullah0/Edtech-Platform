@@ -12,6 +12,12 @@ enum Role {
   ADMIN
 }
 
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELED
+}
+
 model User {
   id        Int          @id @default(autoincrement())
   name      String
@@ -19,6 +25,7 @@ model User {
   password  String
   role      Role         @default(USER)
   courses   Enrollment[] 
+  orders    Order[]      
   createdAt DateTime     @default(now())
 }
 
@@ -48,6 +55,7 @@ model Course {
 
   modules     Module[]
   enrollments Enrollment[]
+  orderItems  OrderItem[]  
 }
 
 model Module {
@@ -66,4 +74,26 @@ model Enrollment {
 
   user   User   @relation(fields: [userId], references: [id])
   course Course @relation(fields: [courseId], references: [id])
+}
+
+model Order {
+  id          Int          @id @default(autoincrement())
+  userId      Int
+  status      OrderStatus  @default(PENDING)
+  totalAmount Float
+  createdAt   DateTime     @default(now())
+
+  user        User         @relation(fields: [userId], references: [id])
+  items       OrderItem[]  
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  courseId  Int
+  price     Float     
+  createdAt DateTime  @default(now())
+
+  order     Order     @relation(fields: [orderId], references: [id])
+  course    Course    @relation(fields: [courseId], references: [id])
 }
