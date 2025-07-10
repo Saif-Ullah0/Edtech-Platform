@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const requireAuth = require('../middlewares/requireAuth');
 const categoryController = require('../controllers/categoryController');
+router.get('/public', categoryController.getCategories);
 
 router.get('/', requireAuth, categoryController.getCategories);
 
