@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const prisma = require('../../prisma/client');
 
 const cancelStaleOrders = async () => {
-  const threshold = new Date(Date.now() - 15 * 60 * 1000); // 15 minutes ago
+  const threshold = new Date(Date.now() - 25 * 60 * 1000); // 25 minutes ago
 
   try {
     const staleOrders = await prisma.order.findMany({
@@ -26,7 +26,7 @@ const cancelStaleOrders = async () => {
 };
 
 const startOrderCleanupJob = () => {
-  cron.schedule('*/5 * * * *', () => {
+  cron.schedule('*/10 * * * *', () => {
     console.log(' Running stale order cleanup job...');
     cancelStaleOrders();
   });

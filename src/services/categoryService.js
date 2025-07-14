@@ -24,6 +24,15 @@ const getCategoryById = async (id) => {
       description: true,
       imageUrl: true,
       createdAt: true,
+      courses: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          price: true,
+          createdAt: true,
+        },
+      },
     },
   });
 };
