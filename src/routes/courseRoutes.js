@@ -4,6 +4,7 @@ const requireAuth = require('../middlewares/requireAuth');
 const courseController = require('../controllers/courseController');
 
 router.get('/', courseController.getCourses);
+router.get('/search', courseController.searchCourses);
 
 router.get('/:id', courseController.getCourseById);
 

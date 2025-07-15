@@ -71,10 +71,28 @@ const deleteCourse = async (req, res) => {
   }
 };
 
+const searchCourses = async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query || typeof query !== 'string') {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+
+    const courses = await courseService.searchCourses(query);
+    res.status(200).json(courses);
+  } catch (error) {
+    console.error('Error searching courses:', error);
+    res.status(500).json({ error: 'Failed to search courses' });
+  }
+};
+
+
 module.exports = {
   getCourses,
   getCourseById,
   createCourse,
   updateCourse,
   deleteCourse,
+  searchCourses
 };

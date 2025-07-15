@@ -1,5 +1,60 @@
 const prisma = require('../../prisma/client');
 
+
+const searchCourses = async (query) => {
+  return await prisma.course.findMany({
+    where: {
+      isDeleted: false, // ✅ Optional: exclude soft-deleted
+      OR: [
+        {
+          title: {
+            contains: query,
+            mode: 'insensitive',
+          },
+        },
+        {
+          description: {
+            contains: query,
+            mode: 'insensitive',
+          },
+        },
+        {
+          category: {
+            name: {
+              contains: query,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          modules: {
+            some: {
+              title: {
+                contains: query,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      price: true,
+      imageUrl: true,
+      category: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  });
+};
+
+
+
 const getAllCourses = async (categorySlug) => {
   const filter = categorySlug
     ? {
@@ -67,4 +122,5 @@ module.exports = {
   createCourse,
   updateCourse,
   softDeleteCourse,
+  searchCourses
 };
