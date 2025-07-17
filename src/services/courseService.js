@@ -88,14 +88,27 @@ const getAllCourses = async (categorySlug) => {
   });
 };
 
+// src/services/courseService.js
 const getCourseById = async (id) => {
-  return await prisma.course.findUnique({
+  const course = await prisma.course.findUnique({
     where: { id },
     include: {
       category: true,
-      modules: true,
+      modules: {
+        orderBy: { orderIndex: 'asc' }
+      },
     },
   });
+
+  // Convert BigInt fields to strings for JSON serialization
+  if (course && course.modules) {
+    course.modules = course.modules.map(module => ({
+      ...module,
+      videoSize: module.videoSize ? module.videoSize.toString() : null
+    }));
+  }
+
+  return course;
 };
 
 const createCourse = async (data) => {

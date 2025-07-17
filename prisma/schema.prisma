@@ -18,6 +18,13 @@ enum OrderStatus {
   CANCELED
 }
 
+enum ModuleType {
+  TEXT
+  VIDEO
+  PDF
+  QUIZ
+}
+
 model User {
   id        Int          @id @default(autoincrement())
   name      String
@@ -59,11 +66,23 @@ model Course {
 }
 
 model Module {
-  id       Int    @id @default(autoincrement())
-  title    String
-  content  String
-  courseId Int
-  course   Course @relation(fields: [courseId], references: [id])
+  id          Int        @id @default(autoincrement())
+  title       String
+  content     String?    // Made optional since video modules might not have text content
+  type        ModuleType @default(TEXT)
+  orderIndex  Int        @default(0) // For ordering modules within a course
+  
+  // Video-specific fields
+  videoUrl    String?    // Path to video file
+  videoSize   BigInt?    // File size in bytes
+  videoDuration Int?     // Duration in seconds
+  thumbnailUrl String?   // Path to video thumbnail
+  
+  courseId    Int
+  course      Course @relation(fields: [courseId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @default(now())
 }
 
 model Enrollment {
