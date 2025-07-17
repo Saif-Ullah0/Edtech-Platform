@@ -53,7 +53,22 @@ app.use('/api/admin/dashboard', requireAuth, requireAdmin, adminDashboardRoutes)
 app.use('/api/admin/enrollments', requireAuth, requireAdmin, adminEnrollmentRoutes);
 app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
 app.use("/api/order", orderRoutes);
+app.get('/api/me', requireAuth, (req, res) => {
+  try {
+    console.log('GET /api/me - User from token:', req.user);
+    
+    res.status(200).json({
+      id: req.user.userId,
+      role: req.user.role,
+    });
+    
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ error: 'Failed to get user data' });
+  }
+});
 
+app.use('/api/debug', require('./routes/debugRoutes'));
 
 app.get('/', (req, res) => {
   res.send('Backend is running');
