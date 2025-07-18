@@ -21,9 +21,8 @@ const adminEnrollmentRoutes = require('./routes/admin/enrollmentAdminRoutes');
 const adminUserRoutes = require('./routes/admin/userAdminRoutes');
 const orderRoutes = require("./routes/orderRoutes");
 
-console.log('🔍 Attempting to import videoRoutes...');
 const videoRoutes = require('./routes/videoRoutes');
-console.log('✅ videoRoutes imported successfully:', typeof videoRoutes);
+const progressRoutes = require('./routes/progressRoutes');
 
 const requireAuth = require('./middlewares/requireAuth');
 const requireAdmin = require('./middlewares/requireAdmin');
@@ -73,7 +72,8 @@ app.use("/api/order", orderRoutes);
 app.use('/api/enroll', requireAuth, enrollmentRoutes);
 
 app.use('/api/videos', videoRoutes);
-console.log('✅ Video routes mounted at /api/videos');
+
+app.use('/api/progress', progressRoutes);
 
 
 // Admin routes (require authentication + admin role)

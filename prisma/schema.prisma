@@ -81,6 +81,9 @@ model Module {
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
   
+  // Add relation to module progress
+  moduleProgress ModuleProgress[]
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt @default(now())
 }
@@ -90,9 +93,36 @@ model Enrollment {
   userId    Int
   courseId  Int
   createdAt DateTime @default(now())
+  
+  // Add progress tracking fields
+  progress     Float?   @default(0.0)  // Overall course progress percentage
+  lastAccessed DateTime @default(now()) @updatedAt  // When user last accessed the course
 
   user   User   @relation(fields: [userId], references: [id])
   course Course @relation(fields: [courseId], references: [id])
+  
+  // Add relation to module progress
+  moduleProgress ModuleProgress[]
+
+  @@unique([userId, courseId])
+}
+
+// New model for tracking individual module progress
+model ModuleProgress {
+  id                   Int       @id @default(autoincrement())
+  enrollmentId         Int
+  moduleId             Int
+  isCompleted          Boolean   @default(false)
+  watchTime            Int       @default(0)        // in seconds
+  completionPercentage Float     @default(0.0)      // percentage watched/read
+  completedAt          DateTime?                    // when it was completed
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  module               Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, moduleId])
 }
 
 model Order {
