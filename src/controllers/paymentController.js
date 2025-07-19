@@ -60,7 +60,7 @@ const createCheckoutSession = async (req, res) => {
       mode: 'payment',
       line_items: [{
         price_data: {
-          currency: 'pkr',
+          currency: 'usd',
           product_data: {
             name: course.title,
             description: course.description,
@@ -155,7 +155,7 @@ const verifySession = async (req, res) => {
       message: 'Payment verified successfully',
       course: course,
       amount: order.totalAmount,
-      currency: 'PKR',
+      currency: 'USD',
       enrollment: enrollment,
       order: order,
       transactionId: session.payment_intent || sessionId

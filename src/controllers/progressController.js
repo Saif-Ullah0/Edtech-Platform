@@ -114,15 +114,18 @@ const updateModuleProgress = async (req, res) => {
       }
     });
 
-    const completedModules = await prisma.moduleProgress.count({
-      where: {
+    const completedModules = await prisma.module.count({
+  where: {
+    courseId: parseInt(courseId),
+    moduleProgress: {
+      some: {
         enrollmentId: enrollment.id,
-        isCompleted: true,
-        module: {
-          courseId: parseInt(courseId)
-        }
+        isCompleted: true
       }
-    });
+    }
+  }
+});
+
 
     const overallProgress = totalModules > 0 ? (completedModules / totalModules) * 100 : 0;
 
