@@ -1,19 +1,23 @@
-// src/routes/admin/dashboardAdminRoutes.js
+// routes/admin/dashboardAdminRoutes.js - SIMPLE VERSION
 const express = require('express');
 const router = express.Router();
-const {
-  getDashboardStats,
-  getUserGrowthStats,
-  getCourseStats,
+
+// Import only the existing functions that work
+const { 
+  getDashboardStats, 
+  getUserGrowthStats, 
+  getCourseStats, 
   getRevenueStats
+  // Remove debugRevenue for now
 } = require('../../controllers/adminDashboardController');
 
-// Main dashboard stats (auth & admin check already handled in server.js)
+// Existing dashboard routes
 router.get('/', getDashboardStats);
+router.get('/users/growth', getUserGrowthStats);
+router.get('/courses', getCourseStats);
+router.get('/revenue', getRevenueStats);
 
-// Additional analytics endpoints
-router.get('/user-growth', getUserGrowthStats);
-router.get('/course-stats', getCourseStats);
-router.get('/revenue-stats', getRevenueStats);
+// Remove the debug route temporarily
+// router.get('/debug/revenue', debugRevenue);
 
 module.exports = router;
