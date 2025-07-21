@@ -59,6 +59,7 @@ model Course {
 
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
+  notes       Note[]   // Add this line
 
   modules     Module[]
   enrollments Enrollment[]
@@ -78,6 +79,8 @@ model Module {
   videoDuration Int?     // Duration in seconds
   thumbnailUrl String?   // Path to video thumbnail
   
+  notes       Note[]   // Add this line
+
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
   
@@ -86,6 +89,33 @@ model Module {
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt @default(now())
+}
+model Note {
+  id          Int      @id @default(autoincrement())
+  title       String
+  slug        String   @unique
+  description String?
+  content     String?  // For text notes
+  fileUrl     String?  // For PDF files
+  fileName    String?  // Original file name
+  fileSize    String?  // File size in bytes
+  fileType    String?  // pdf, txt, doc, etc.
+  downloadCount Int    @default(0)
+  isPublished Boolean  @default(false)
+  orderIndex  Int      @default(0)
+  
+  // Relationships
+  courseId    Int
+  course      Course   @relation(fields: [courseId], references: [id])
+  moduleId    Int?     // Optional - can be associated with specific module
+  module      Module?  @relation(fields: [moduleId], references: [id])
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isDeleted   Boolean  @default(false)
+  
+  @@map("notes")
 }
 
 model Enrollment {

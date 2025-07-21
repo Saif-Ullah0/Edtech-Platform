@@ -26,6 +26,7 @@ const progressRoutes = require('./routes/progressRoutes');
 
 const requireAuth = require('./middlewares/requireAuth');
 const requireAdmin = require('./middlewares/requireAdmin');
+const notesRoutes = require('./routes/notesRoutes');
 
 const startOrderCleanupJob = require('./cron/orderCleanupJob');
 startOrderCleanupJob();
@@ -75,6 +76,8 @@ app.use('/api/videos', videoRoutes);
 
 app.use('/api/progress', progressRoutes);
 
+
+app.use('/api/notes', notesRoutes);
 
 // Admin routes (require authentication + admin role)
 app.use('/api/admin/categories', requireAuth, requireAdmin, adminCategoryRoutes);
