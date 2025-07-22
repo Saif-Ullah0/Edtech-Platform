@@ -38,6 +38,10 @@ const checkPaymentHealth = async (req, res) => {
   }
 };
 
+// ================================
+// EXISTING COURSE PAYMENT FUNCTIONS
+// ================================
+
 // Fast direct enrollment (for immediate processing)
 const fastEnrollment = async (req, res) => {
   const { courseId, paymentMethodId } = req.body;
@@ -130,6 +134,7 @@ const fastEnrollment = async (req, res) => {
       confirm: true,
       return_url: `${process.env.FRONTEND_URL}/courses/${courseId}/modules`,
       metadata: {
+        type: 'course_purchase',
         courseId: courseId.toString(),
         userId: userId.toString(),
         courseName: course.title,
@@ -261,6 +266,7 @@ const createPaymentIntent = async (req, res) => {
       currency: 'usd',
       automatic_payment_methods: { enabled: true },
       metadata: {
+        type: 'course_purchase',
         courseId: courseId.toString(),
         userId: userId.toString(),
         courseName: course.title,
@@ -460,6 +466,7 @@ const createCheckoutSession = async (req, res) => {
       success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}&course_id=${courseId}&order_id=${order.id}`,
       cancel_url: `${process.env.FRONTEND_URL}/courses/${courseId}`,
       metadata: {
+        type: 'course_purchase',
         orderId: order.id.toString(),
         userId: userId.toString(),
         courseId: courseId.toString(),
@@ -507,21 +514,475 @@ const createCheckoutSession = async (req, res) => {
   }
 };
 
+// ================================
+// NEW MODULE PAYMENT FUNCTIONS
+// ================================
+
+// Get module with pricing info
+const getModuleDetails = async (req, res) => {
+  try {
+    const { moduleId } = req.params;
+    const userId = req.user?.userId;
+
+    const module = await prisma.module.findUnique({
+      where: { id: parseInt(moduleId) },
+      include: {
+        course: {
+          select: { id: true, title: true }
+        }
+      }
+    });
+
+    if (!module) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+
+    // Check if user already owns this module
+    const existingEnrollment = await prisma.moduleEnrollment.findUnique({
+      where: {
+        userId_moduleId: {
+          userId: userId,
+          moduleId: parseInt(moduleId)
+        }
+      }
+    });
+
+    res.json({
+      module,
+      isOwned: !!existingEnrollment,
+      canPurchase: !existingEnrollment && !module.isFree
+    });
+
+  } catch (error) {
+    console.error('Error fetching module details:', error);
+    res.status(500).json({ error: 'Failed to fetch module details' });
+  }
+};
+
+// Purchase individual module
+const purchaseModule = async (req, res) => {
+  try {
+    const { moduleId } = req.body;
+    const userId = req.user?.userId;
+
+    // Get module details
+    const module = await prisma.module.findUnique({
+      where: { id: moduleId },
+      include: { course: true }
+    });
+
+    if (!module) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+
+    // Check if already enrolled
+    const existingEnrollment = await prisma.moduleEnrollment.findUnique({
+      where: {
+        userId_moduleId: { userId, moduleId }
+      }
+    });
+
+    if (existingEnrollment) {
+      return res.status(400).json({ error: 'Module already purchased' });
+    }
+
+    // Handle free modules
+    if (module.isFree || module.price === 0) {
+      const enrollment = await prisma.moduleEnrollment.create({
+        data: {
+          userId,
+          moduleId,
+          purchasePrice: 0,
+          progress: 0
+        }
+      });
+
+      return res.json({
+        success: true,
+        message: 'Free module enrolled successfully!',
+        enrollment
+      });
+    }
+
+    // Create Stripe checkout for paid module
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `${module.course.title} - ${module.title}`,
+            description: module.content || `Module: ${module.title}`,
+          },
+          unit_amount: Math.round(module.price * 100),
+        },
+        quantity: 1,
+      }],
+      success_url: `${process.env.FRONTEND_URL}/courses/${module.courseId}/modules/${moduleId}?success=true`,
+      cancel_url: `${process.env.FRONTEND_URL}/courses/${module.courseId}/modules/${moduleId}`,
+      metadata: {
+        type: 'module_purchase',
+        userId: userId.toString(),
+        moduleId: moduleId.toString(),
+        price: module.price.toString()
+      },
+    });
+
+    res.json({
+      success: true,
+      checkoutUrl: session.url,
+      sessionId: session.id
+    });
+
+  } catch (error) {
+    console.error('Error purchasing module:', error);
+    res.status(500).json({ error: 'Failed to purchase module' });
+  }
+};
+
+// Get user's module enrollments
+const getUserModules = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+
+    const enrollments = await prisma.moduleEnrollment.findMany({
+      where: { userId },
+      include: {
+        module: {
+          include: {
+            course: {
+              select: { id: true, title: true }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(enrollments);
+
+  } catch (error) {
+    console.error('Error fetching user modules:', error);
+    res.status(500).json({ error: 'Failed to fetch modules' });
+  }
+};
+
+// ================================
+// NEW BUNDLE FUNCTIONS
+// ================================
+
+// Create a new bundle
+const createBundle = async (req, res) => {
+  try {
+    const { name, description, moduleIds, discount = 0 } = req.body;
+    const userId = req.user?.userId;
+
+    if (!moduleIds || moduleIds.length === 0) {
+      return res.status(400).json({ error: 'At least one module is required' });
+    }
+
+    // Get modules and calculate total price
+    const modules = await prisma.module.findMany({
+      where: { id: { in: moduleIds } }
+    });
+
+    if (modules.length !== moduleIds.length) {
+      return res.status(400).json({ error: 'Some modules not found' });
+    }
+
+    const totalPrice = modules.reduce((sum, module) => sum + module.price, 0);
+    const discountAmount = (totalPrice * discount) / 100;
+    const finalPrice = totalPrice - discountAmount;
+
+    // Create bundle
+    const bundle = await prisma.bundle.create({
+      data: {
+        name,
+        description,
+        userId,
+        totalPrice,
+        discount,
+        finalPrice,
+        items: {
+          create: moduleIds.map(moduleId => ({ moduleId }))
+        }
+      },
+      include: {
+        items: {
+          include: {
+            module: {
+              include: { course: true }
+            }
+          }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      bundle,
+      message: 'Bundle created successfully!'
+    });
+
+  } catch (error) {
+    console.error('Error creating bundle:', error);
+    res.status(500).json({ error: 'Failed to create bundle' });
+  }
+};
+
+// Get user's bundles
+const getUserBundles = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+
+    const bundles = await prisma.bundle.findMany({
+      where: { userId },
+      include: {
+        items: {
+          include: {
+            module: {
+              include: { course: true }
+            }
+          }
+        },
+        purchases: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(bundles);
+
+  } catch (error) {
+    console.error('Error fetching bundles:', error);
+    res.status(500).json({ error: 'Failed to fetch bundles' });
+  }
+};
+
+// Purchase a bundle
+const purchaseBundle = async (req, res) => {
+  try {
+    const { bundleId } = req.body;
+    const userId = req.user?.userId;
+
+    // Get bundle details
+    const bundle = await prisma.bundle.findUnique({
+      where: { id: bundleId },
+      include: {
+        items: {
+          include: {
+            module: {
+              include: { course: true }
+            }
+          }
+        }
+      }
+    });
+
+    if (!bundle) {
+      return res.status(404).json({ error: 'Bundle not found' });
+    }
+
+    if (bundle.userId !== userId) {
+      return res.status(403).json({ error: 'Not authorized to purchase this bundle' });
+    }
+
+    if (bundle.isPurchased) {
+      return res.status(400).json({ error: 'Bundle already purchased' });
+    }
+
+    // Check for already owned modules
+    const moduleIds = bundle.items.map(item => item.moduleId);
+    const existingEnrollments = await prisma.moduleEnrollment.findMany({
+      where: {
+        userId,
+        moduleId: { in: moduleIds }
+      }
+    });
+
+    if (existingEnrollments.length > 0) {
+      return res.status(400).json({ 
+        error: 'You already own some modules in this bundle',
+        ownedModules: existingEnrollments.map(e => e.moduleId)
+      });
+    }
+
+    // Create Stripe checkout
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: bundle.name,
+            description: `Bundle: ${bundle.description || ''} (${bundle.items.length} modules)`,
+          },
+          unit_amount: Math.round(bundle.finalPrice * 100),
+        },
+        quantity: 1,
+      }],
+      success_url: `${process.env.FRONTEND_URL}/my-courses?bundle_success=${bundleId}`,
+      cancel_url: `${process.env.FRONTEND_URL}/bundles/${bundleId}`,
+      metadata: {
+        type: 'bundle_purchase',
+        userId: userId.toString(),
+        bundleId: bundleId.toString(),
+        finalPrice: bundle.finalPrice.toString()
+      },
+    });
+
+    res.json({
+      success: true,
+      checkoutUrl: session.url,
+      sessionId: session.id
+    });
+
+  } catch (error) {
+    console.error('Error purchasing bundle:', error);
+    res.status(500).json({ error: 'Failed to purchase bundle' });
+  }
+};
+
+// Delete bundle
+const deleteBundle = async (req, res) => {
+  try {
+    const { bundleId } = req.params;
+    const userId = req.user?.userId;
+
+    const bundle = await prisma.bundle.findUnique({
+      where: { id: parseInt(bundleId) }
+    });
+
+    if (!bundle || bundle.userId !== userId) {
+      return res.status(404).json({ error: 'Bundle not found or not authorized' });
+    }
+
+    if (bundle.isPurchased) {
+      return res.status(400).json({ error: 'Cannot delete purchased bundle' });
+    }
+
+    await prisma.bundle.delete({
+      where: { id: parseInt(bundleId) }
+    });
+
+    res.json({
+      success: true,
+      message: 'Bundle deleted successfully!'
+    });
+
+  } catch (error) {
+    console.error('Error deleting bundle:', error);
+    res.status(500).json({ error: 'Failed to delete bundle' });
+  }
+};
+
 // Keep existing functions...
 const verifySession = async (req, res) => {
   // ... your existing verifySession code
 };
 
+// Updated webhook handler to support modules and bundles
 const stripeWebhookHandler = async (req, res) => {
-  // ... your existing webhook code
+  const sig = req.headers['stripe-signature'];
+  
+  try {
+    const event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const { type, userId, moduleId, bundleId, courseId } = session.metadata;
+      
+      if (type === 'module_purchase') {
+        // Handle module purchase
+        await prisma.moduleEnrollment.create({
+          data: {
+            userId: parseInt(userId),
+            moduleId: parseInt(moduleId),
+            purchasePrice: session.amount_total / 100,
+            paymentTransactionId: session.payment_intent,
+            progress: 0,
+            completed: false
+          }
+        });
+        
+        console.log(`✅ Module ${moduleId} purchased by user ${userId}`);
+        
+      } else if (type === 'bundle_purchase') {
+        // Handle bundle purchase
+        const bundle = await prisma.bundle.findUnique({
+          where: { id: parseInt(bundleId) },
+          include: { items: true }
+        });
+        
+        if (bundle) {
+          // Mark bundle as purchased
+          await prisma.bundle.update({
+            where: { id: parseInt(bundleId) },
+            data: { isPurchased: true }
+          });
+          
+          // Create bundle purchase record
+          await prisma.bundlePurchase.create({
+            data: {
+              bundleId: parseInt(bundleId),
+              userId: parseInt(userId),
+              paymentTransactionId: session.payment_intent,
+              purchasePrice: bundle.totalPrice,
+              discount: bundle.discount,
+              finalPrice: bundle.finalPrice
+            }
+          });
+          
+          // Enroll user in all modules in the bundle
+          const moduleEnrollments = bundle.items.map(item => ({
+            userId: parseInt(userId),
+            moduleId: item.moduleId,
+            purchasePrice: 0, // Part of bundle
+            paymentTransactionId: session.payment_intent,
+            progress: 0,
+            completed: false
+          }));
+          
+          await prisma.moduleEnrollment.createMany({
+            data: moduleEnrollments,
+            skipDuplicates: true
+          });
+          
+          console.log(`✅ Bundle ${bundleId} purchased by user ${userId}`);
+        }
+      } else {
+        // Handle existing course purchase logic
+        // ... your existing course purchase webhook code
+        console.log(`✅ Course purchase handled: ${courseId}`);
+      }
+    }
+    
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(400).send(`Webhook Error: ${error.message}`);
+  }
 };
 
 module.exports = { 
+  // Existing course payment functions
   fastEnrollment,
   createPaymentIntent,
   confirmEnrollment,
   createCheckoutSession, 
-  verifySession, 
+  verifySession,
   stripeWebhookHandler,
-  checkPaymentHealth // Add health check
+  checkPaymentHealth,
+  
+  // New module payment functions
+  getModuleDetails,
+  purchaseModule,
+  getUserModules,
+  
+  // New bundle functions
+  createBundle,
+  getUserBundles,
+  purchaseBundle,
+  deleteBundle
 };
