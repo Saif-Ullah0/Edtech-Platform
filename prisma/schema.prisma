@@ -34,6 +34,11 @@ model User {
   courses   Enrollment[] 
   orders    Order[]      
   createdAt DateTime     @default(now())
+  
+  // NEW: Module-wise payment relations
+  moduleEnrollments ModuleEnrollment[]
+  bundles           Bundle[]
+  bundlePurchases   BundlePurchase[]
 }
 
 model Category {
@@ -59,7 +64,7 @@ model Course {
 
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
-  notes       Note[]   // Add this line
+  notes       Note[]
 
   modules     Module[]
   enrollments Enrollment[]
@@ -69,37 +74,129 @@ model Course {
 model Module {
   id          Int        @id @default(autoincrement())
   title       String
-  content     String?    // Made optional since video modules might not have text content
+  content     String?
   type        ModuleType @default(TEXT)
-  orderIndex  Int        @default(0) // For ordering modules within a course
+  orderIndex  Int        @default(0)
+  
+  // NEW: Module pricing fields
+  price       Float      @default(0)        // Individual module price
+  isFree      Boolean    @default(false)    // Whether module is free
+  isPublished Boolean    @default(false)    // Whether module is available for purchase
   
   // Video-specific fields
-  videoUrl    String?    // Path to video file
-  videoSize   BigInt?    // File size in bytes
-  videoDuration Int?     // Duration in seconds
-  thumbnailUrl String?   // Path to video thumbnail
+  videoUrl    String?
+  videoSize   BigInt?
+  videoDuration Int?
+  thumbnailUrl String?
   
-  notes       Note[]   // Add this line
+  notes       Note[]
 
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
   
-  // Add relation to module progress
+  // Existing relations
   moduleProgress ModuleProgress[]
+  
+  // NEW: Module payment relations
+  moduleEnrollments ModuleEnrollment[]
+  bundleItems       BundleItem[]
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt @default(now())
 }
+
+// NEW: Individual module enrollments/purchases
+model ModuleEnrollment {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  moduleId  Int
+  progress  Float    @default(0)
+  completed Boolean  @default(false)
+  
+  // Payment tracking
+  paymentTransactionId String?
+  purchasePrice        Float
+  purchaseDate         DateTime @default(now())
+  
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module    Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, moduleId])
+  @@map("module_enrollments")
+}
+
+// NEW: User-created bundles
+model Bundle {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  userId      Int
+  totalPrice  Float
+  discount    Float    @default(0) // Percentage discount
+  finalPrice  Float    // After discount
+  
+  // Bundle status
+  isActive    Boolean  @default(true)
+  isPurchased Boolean  @default(false)
+  
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items       BundleItem[]
+  purchases   BundlePurchase[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("bundles")
+}
+
+// NEW: Items in a bundle
+model BundleItem {
+  id       Int @id @default(autoincrement())
+  bundleId Int
+  moduleId Int
+  
+  // Relations
+  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  @@unique([bundleId, moduleId])
+  @@map("bundle_items")
+}
+
+// NEW: Bundle purchases
+model BundlePurchase {
+  id                   Int      @id @default(autoincrement())
+  bundleId             Int
+  userId               Int
+  paymentTransactionId String?
+  purchasePrice        Float
+  discount             Float
+  finalPrice           Float
+  
+  // Relations
+  bundle    Bundle @relation(fields: [bundleId], references: [id])
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+
+  @@map("bundle_purchases")
+}
+
 model Note {
   id          Int      @id @default(autoincrement())
   title       String
   slug        String   @unique
   description String?
-  content     String?  // For text notes
-  fileUrl     String?  // For PDF files
-  fileName    String?  // Original file name
-  fileSize    String?  // File size in bytes
-  fileType    String?  // pdf, txt, doc, etc.
+  content     String?
+  fileUrl     String?
+  fileName    String?
+  fileSize    String?
+  fileType    String?
   downloadCount Int    @default(0)
   isPublished Boolean  @default(false)
   orderIndex  Int      @default(0)
@@ -107,7 +204,7 @@ model Note {
   // Relationships
   courseId    Int
   course      Course   @relation(fields: [courseId], references: [id])
-  moduleId    Int?     // Optional - can be associated with specific module
+  moduleId    Int?
   module      Module?  @relation(fields: [moduleId], references: [id])
   
   // Timestamps
@@ -124,28 +221,31 @@ model Enrollment {
   courseId  Int
   createdAt DateTime @default(now())
   
-  // Add progress tracking fields
-  progress     Float?   @default(0.0)  // Overall course progress percentage
-  lastAccessed DateTime @default(now()) @updatedAt  // When user last accessed the course
+  // Progress tracking fields
+  progress     Float?   @default(0.0)
+  lastAccessed DateTime @default(now()) @updatedAt
+  
+  // NEW: Payment tracking for course enrollments
+  paymentTransactionId String?
 
   user   User   @relation(fields: [userId], references: [id])
   course Course @relation(fields: [courseId], references: [id])
   
-  // Add relation to module progress
+  // Module progress relation
   moduleProgress ModuleProgress[]
 
   @@unique([userId, courseId])
 }
 
-// New model for tracking individual module progress
+// Module progress tracking
 model ModuleProgress {
   id                   Int       @id @default(autoincrement())
   enrollmentId         Int
   moduleId             Int
   isCompleted          Boolean   @default(false)
-  watchTime            Int       @default(0)        // in seconds
-  completionPercentage Float     @default(0.0)      // percentage watched/read
-  completedAt          DateTime?                    // when it was completed
+  watchTime            Int       @default(0)
+  completionPercentage Float     @default(0.0)
+  completedAt          DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
