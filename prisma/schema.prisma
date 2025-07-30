@@ -31,6 +31,8 @@ model User {
   email     String       @unique
   password  String
   role      Role         @default(USER)
+  status    String       @default("ACTIVE") // "ACTIVE", "BANNED", "DELETED"
+
   courses   Enrollment[] 
   orders    Order[]      
   createdAt DateTime     @default(now())
@@ -60,6 +62,10 @@ model Course {
   price       Float
   imageUrl    String?
   isDeleted   Boolean  @default(false)
+
+  publishStatus String  @default("DRAFT")     // "DRAFT" or "PUBLISHED"
+  isPaid        Boolean @default(false)       // true = paid course, false = free
+  
   createdAt   DateTime @default(now())
 
   categoryId Int
