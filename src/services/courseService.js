@@ -3,7 +3,8 @@ const prisma = require('../../prisma/client');
 const searchCourses = async (query) => {
   return await prisma.course.findMany({
     where: {
-      isDeleted: false, // ✅ Optional: exclude soft-deleted
+      isDeleted: false,
+      publishStatus: "PUBLISHED", // 🆕 Only show published courses
       OR: [
         {
           title: {
@@ -43,6 +44,8 @@ const searchCourses = async (query) => {
       description: true,
       price: true,
       imageUrl: true,
+      publishStatus: true, // 🆕 Include publish status
+      isPaid: true,        // 🆕 Include pricing info
       category: {
         select: {
           name: true,
@@ -52,8 +55,61 @@ const searchCourses = async (query) => {
   });
 };
 
-// FIXED: getAllCourses now includes modules with pricing fields
+// 🆕 UPDATED: Only show published courses to students
 const getAllCourses = async (categorySlug) => {
+  const filter = categorySlug
+    ? {
+        isDeleted: false,
+        publishStatus: "PUBLISHED", // 🆕 Only published courses
+        category: {
+          slug: categorySlug,
+        },
+      }
+    : {
+        isDeleted: false,
+        publishStatus: "PUBLISHED", // 🆕 Only published courses
+      };
+
+  return await prisma.course.findMany({
+    where: filter,
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+      modules: {
+        where: {
+          isPublished: true,
+        },
+        orderBy: {
+          orderIndex: 'asc'
+        },
+        select: {
+          id: true,
+          title: true,
+          content: true,
+          type: true,
+          orderIndex: true,
+          videoUrl: true,
+          videoDuration: true,
+          videoSize: true,
+          thumbnailUrl: true,
+          price: true,
+          isFree: true,
+          isPublished: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      }
+    },
+  });
+};
+
+// 🆕 NEW: Admin version - shows all courses including drafts
+const getAllCoursesForAdmin = async (categorySlug) => {
   const filter = categorySlug
     ? {
         isDeleted: false,
@@ -76,9 +132,6 @@ const getAllCourses = async (categorySlug) => {
         },
       },
       modules: {
-        where: {
-          isPublished: true, // Only include published modules
-        },
         orderBy: {
           orderIndex: 'asc'
         },
@@ -88,28 +141,24 @@ const getAllCourses = async (categorySlug) => {
           content: true,
           type: true,
           orderIndex: true,
-          
-          // Video fields
           videoUrl: true,
           videoDuration: true,
           videoSize: true,
           thumbnailUrl: true,
-          
-          // Payment fields
           price: true,
           isFree: true,
           isPublished: true,
-          
-          // Timestamps
           createdAt: true,
           updatedAt: true
         }
       }
     },
+    orderBy: {
+      createdAt: 'desc'
+    }
   });
 };
 
-// ENHANCED: getCourseById with explicit module payment fields
 const getCourseById = async (id) => {
   const course = await prisma.course.findUnique({
     where: { id },
@@ -130,19 +179,13 @@ const getCourseById = async (id) => {
           content: true,
           type: true,
           orderIndex: true,
-          
-          // Video fields
           videoUrl: true,
           videoDuration: true,
           videoSize: true,
           thumbnailUrl: true,
-          
-          // NEW: Payment fields (explicitly included)
           price: true,
           isFree: true,
           isPublished: true,
-          
-          // Timestamps
           createdAt: true,
           updatedAt: true
         }
@@ -150,22 +193,25 @@ const getCourseById = async (id) => {
     },
   });
 
-  // Convert BigInt fields to strings for JSON serialization and ensure payment fields
   if (course && course.modules) {
     course.modules = course.modules.map(module => ({
       ...module,
       videoSize: module.videoSize ? module.videoSize.toString() : null,
-      // Ensure payment fields have proper defaults
       price: module.price || 0,
       isFree: module.isFree || false,
-      isPublished: module.isPublished !== false // Default to true if not explicitly false
+      isPublished: module.isPublished !== false
     }));
   }
 
   return course;
 };
 
-// NEW: Get course with module ownership for specific user
+// 🆕 NEW: Admin version - can see draft courses
+const getCourseByIdForAdmin = async (id) => {
+  // Same as getCourseById but without publishStatus filtering
+  return await getCourseById(id);
+};
+
 const getCourseByIdWithOwnership = async (courseId, userId) => {
   try {
     const course = await getCourseById(courseId);
@@ -174,7 +220,6 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
       return course;
     }
 
-    // Get user's module enrollments for this course
     const moduleEnrollments = await prisma.moduleEnrollment.findMany({
       where: {
         userId: userId,
@@ -189,7 +234,6 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
 
     const ownedModuleIds = moduleEnrollments.map(enrollment => enrollment.moduleId);
 
-    // Add ownership info to modules
     if (course.modules) {
       course.modules = course.modules.map(module => ({
         ...module,
@@ -204,11 +248,33 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
   }
 };
 
+// 🆕 UPDATED: Enhanced course creation with validation
 const createCourse = async (data) => {
+  // 🆕 Validate pricing logic
+  if (data.isPaid && (!data.price || data.price <= 0)) {
+    throw new Error('Paid courses must have a price greater than 0');
+  }
+  
+  // 🆕 Set price to 0 if course is not paid
+  if (!data.isPaid) {
+    data.price = 0;
+  }
+
   return await prisma.course.create({ data });
 };
 
+// 🆕 UPDATED: Enhanced course update with validation
 const updateCourse = async (id, data) => {
+  // 🆕 Validate pricing logic
+  if (data.isPaid && (!data.price || data.price <= 0)) {
+    throw new Error('Paid courses must have a price greater than 0');
+  }
+  
+  // 🆕 Set price to 0 if course is not paid
+  if (data.isPaid === false) {
+    data.price = 0;
+  }
+
   return await prisma.course.update({
     where: { id },
     data,
@@ -224,8 +290,10 @@ const softDeleteCourse = async (id) => {
 
 module.exports = {
   getAllCourses,
+  getAllCoursesForAdmin,        // 🆕 NEW
   getCourseById,
-  getCourseByIdWithOwnership, // NEW: Enhanced function with ownership
+  getCourseByIdForAdmin,        // 🆕 NEW
+  getCourseByIdWithOwnership,
   createCourse,
   updateCourse,
   softDeleteCourse,
