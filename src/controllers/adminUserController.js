@@ -1,18 +1,26 @@
-// backend/controllers/userController.js
 const bcrypt = require('bcrypt');
 const prisma = require('../../prisma/client');
 
-// GET /api/admin/users - Get all users
+// 🆕 UPDATED: Get all users with status filtering
 const getAllUsers = async (req, res) => {
   try {
     console.log('🔍 BACKEND Users: Fetching all users...');
     
+    const { status } = req.query; // 🆕 Optional status filter
+    
+    const where = {};
+    if (status) {
+      where.status = status.toUpperCase();
+    }
+    
     const users = await prisma.user.findMany({
+      where,
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
+        status: true,    // 🆕 Include status
         createdAt: true
       },
       orderBy: {
@@ -29,7 +37,6 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-// POST /api/admin/users - Create new user
 const createUser = async (req, res) => {
   try {
     console.log('🔍 BACKEND Users: Creating new user...');
@@ -37,14 +44,12 @@ const createUser = async (req, res) => {
     
     const { name, email, password, role } = req.body;
 
-    // Validate required fields
     if (!name || !email || !password) {
       return res.status(400).json({ 
         error: 'Name, email, and password are required' 
       });
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ 
@@ -52,7 +57,6 @@ const createUser = async (req, res) => {
       });
     }
 
-    // Check if user with this email already exists
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
@@ -63,23 +67,23 @@ const createUser = async (req, res) => {
       });
     }
 
-    // Hash password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create the user
     const user = await prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role: role || 'USER' // Default to USER if no role specified
+        role: role || 'USER',
+        status: 'ACTIVE'    // 🆕 Default to active
       },
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
+        status: true,       // 🆕 Include status
         createdAt: true
       }
     });
@@ -93,7 +97,6 @@ const createUser = async (req, res) => {
   }
 };
 
-// GET /api/admin/users/:id - Get user by ID
 const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -106,6 +109,7 @@ const getUserById = async (req, res) => {
         name: true,
         email: true,
         role: true,
+        status: true,    // 🆕 Include status
         createdAt: true
       }
     });
@@ -123,16 +127,15 @@ const getUserById = async (req, res) => {
   }
 };
 
-// PUT /api/admin/users/:id - Update user
+// 🆕 UPDATED: Enhanced update with status changes
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, status } = req.body; // 🆕 Added status
     
     console.log('🔍 BACKEND Users: Updating user:', id);
     console.log('🔍 BACKEND Users: Update data:', { ...req.body, password: password ? '[HIDDEN]' : undefined });
 
-    // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { id: parseInt(id) }
     });
@@ -141,7 +144,6 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Check if email is being changed and if it's already taken
     if (email && email !== existingUser.email) {
       const emailTaken = await prisma.user.findUnique({
         where: { email }
@@ -154,19 +156,17 @@ const updateUser = async (req, res) => {
       }
     }
 
-    // Prepare update data
     const updateData = {};
     if (name) updateData.name = name;
     if (email) updateData.email = email;
     if (role) updateData.role = role;
+    if (status) updateData.status = status.toUpperCase(); // 🆕 Handle status update
 
-    // Hash new password if provided
     if (password) {
       const saltRounds = 10;
       updateData.password = await bcrypt.hash(password, saltRounds);
     }
 
-    // Update the user
     const updatedUser = await prisma.user.update({
       where: { id: parseInt(id) },
       data: updateData,
@@ -175,6 +175,7 @@ const updateUser = async (req, res) => {
         name: true,
         email: true,
         role: true,
+        status: true,    // 🆕 Include status
         createdAt: true
       }
     });
@@ -188,14 +189,12 @@ const updateUser = async (req, res) => {
   }
 };
 
-// PUT /api/admin/users/:id/promote - Promote user to admin
 const promoteUser = async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('🔍 BACKEND Users: Promoting user to admin:', id);
 
-    // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { id: parseInt(id) }
     });
@@ -208,7 +207,6 @@ const promoteUser = async (req, res) => {
       return res.status(400).json({ error: 'User is already an admin' });
     }
 
-    // Promote user to admin
     const promotedUser = await prisma.user.update({
       where: { id: parseInt(id) },
       data: { role: 'ADMIN' },
@@ -217,6 +215,7 @@ const promoteUser = async (req, res) => {
         name: true,
         email: true,
         role: true,
+        status: true,    // 🆕 Include status
         createdAt: true
       }
     });
@@ -230,14 +229,13 @@ const promoteUser = async (req, res) => {
   }
 };
 
-// DELETE /api/admin/users/:id - Delete user (optional)
+// 🆕 UPDATED: Soft delete instead of hard delete
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
     
-    console.log('🔍 BACKEND Users: Deleting user:', id);
+    console.log('🔍 BACKEND Users: Soft deleting user:', id);
 
-    // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { id: parseInt(id) }
     });
@@ -246,22 +244,116 @@ const deleteUser = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Don't allow deleting the current admin (optional safety check)
     if (req.user && req.user.userId === parseInt(id)) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
-    // Delete the user
-    await prisma.user.delete({
-      where: { id: parseInt(id) }
+    // 🆕 Soft delete by updating status
+    const deletedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: { status: 'DELETED' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        createdAt: true
+      }
     });
 
-    console.log('✅ BACKEND Users: User deleted successfully');
-    res.status(200).json({ message: 'User deleted successfully' });
+    console.log('✅ BACKEND Users: User soft deleted successfully');
+    res.status(200).json({ message: 'User deleted successfully', user: deletedUser });
     
   } catch (error) {
     console.error('❌ BACKEND Users: Error deleting user:', error);
     res.status(500).json({ error: 'Failed to delete user' });
+  }
+};
+
+// 🆕 NEW: Ban user endpoint
+const banUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('🔍 BACKEND Users: Banning user:', id);
+
+    const existingUser = await prisma.user.findUnique({
+      where: { id: parseInt(id) }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (req.user && req.user.userId === parseInt(id)) {
+      return res.status(400).json({ error: 'Cannot ban your own account' });
+    }
+
+    if (existingUser.status === 'BANNED') {
+      return res.status(400).json({ error: 'User is already banned' });
+    }
+
+    const bannedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: { status: 'BANNED' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        createdAt: true
+      }
+    });
+
+    console.log('✅ BACKEND Users: User banned successfully');
+    res.status(200).json({ message: 'User banned successfully', user: bannedUser });
+    
+  } catch (error) {
+    console.error('❌ BACKEND Users: Error banning user:', error);
+    res.status(500).json({ error: 'Failed to ban user' });
+  }
+};
+
+// 🆕 NEW: Unban user endpoint
+const unbanUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('🔍 BACKEND Users: Unbanning user:', id);
+
+    const existingUser = await prisma.user.findUnique({
+      where: { id: parseInt(id) }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (existingUser.status !== 'BANNED') {
+      return res.status(400).json({ error: 'User is not banned' });
+    }
+
+    const unbannedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: { status: 'ACTIVE' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        createdAt: true
+      }
+    });
+
+    console.log('✅ BACKEND Users: User unbanned successfully');
+    res.status(200).json({ message: 'User unbanned successfully', user: unbannedUser });
+    
+  } catch (error) {
+    console.error('❌ BACKEND Users: Error unbanning user:', error);
+    res.status(500).json({ error: 'Failed to unban user' });
   }
 };
 
@@ -271,5 +363,7 @@ module.exports = {
   getUserById,
   updateUser,
   promoteUser,
-  deleteUser
+  deleteUser,
+  banUser,        // 🆕 NEW
+  unbanUser       // 🆕 NEW
 };

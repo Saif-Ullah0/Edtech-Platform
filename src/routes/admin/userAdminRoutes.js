@@ -1,4 +1,3 @@
-// backend/routes/admin/userAdminRoutes.js
 const express = require('express');
 const router = express.Router();
 const requireAuth = require('../../middlewares/requireAuth');
@@ -20,7 +19,11 @@ router.put('/:id', requireAuth, requireAdmin, userController.updateUser);
 // PUT /api/admin/users/:id/promote - Promote user to admin
 router.put('/:id/promote', requireAuth, requireAdmin, userController.promoteUser);
 
-// DELETE /api/admin/users/:id - Delete user (optional)
+// DELETE /api/admin/users/:id - Delete user (soft delete)
 router.delete('/:id', requireAuth, requireAdmin, userController.deleteUser);
+
+// 🆕 NEW: Ban/Unban routes
+router.put('/:id/ban', requireAuth, requireAdmin, userController.banUser);
+router.put('/:id/unban', requireAuth, requireAdmin, userController.unbanUser);
 
 module.exports = router;

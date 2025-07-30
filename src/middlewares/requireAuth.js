@@ -1,11 +1,10 @@
-// backend/src/middlewares/requireAuth.js
 const jwt = require('jsonwebtoken');
+const prisma = require('../../prisma/client'); // 🆕 Added prisma import
 
-const requireAuth = (req, res, next) => {
+const requireAuth = async (req, res, next) => { // 🆕 Made async
   console.log('🔍 BACKEND requireAuth: Middleware called');
   console.log('🔍 BACKEND requireAuth: Request URL:', req.url);
   console.log('🔍 BACKEND requireAuth: Request method:', req.method);
-  console.log('🔍 BACKEND requireAuth: All cookies:', req.cookies);
 
   try {
     const token = req.cookies.token;
@@ -16,21 +15,46 @@ const requireAuth = (req, res, next) => {
     }
 
     console.log('🔍 BACKEND requireAuth: Token found:', token.substring(0, 20) + '...');
-    console.log('🔍 BACKEND requireAuth: About to verify token...');
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
     console.log('🔍 BACKEND requireAuth: Token decoded successfully:', decoded);
 
-    // ✅ Set user data on request object with correct structure
+    // 🆕 CHECK USER STATUS - Verify user is still active
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true
+      }
+    });
+
+    if (!user) {
+      console.log('❌ BACKEND requireAuth: User not found');
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    if (user.status === 'BANNED') {
+      console.log('❌ BACKEND requireAuth: User is banned');
+      return res.status(403).json({ error: 'Account has been banned. Please contact support.' });
+    }
+
+    if (user.status === 'DELETED') {
+      console.log('❌ BACKEND requireAuth: User is deleted');
+      return res.status(403).json({ error: 'Account has been deactivated.' });
+    }
+
+    // Set user data on request object
     req.user = {
-      userId: decoded.userId,  // ✅ Use userId from token
-      id: decoded.userId,      // ✅ Also set as id for compatibility
-      email: decoded.email,
-      role: decoded.role
+      userId: decoded.userId,
+      id: decoded.userId,
+      email: user.email,    // 🆕 Use fresh data from DB
+      role: user.role,      // 🆕 Use fresh data from DB
+      status: user.status   // 🆕 Include status
     };
 
-    console.log('✅ BACKEND requireAuth: User set on request:', req.user);
+    console.log('✅ BACKEND requireAuth: User authenticated:', req.user);
     next();
 
   } catch (error) {
