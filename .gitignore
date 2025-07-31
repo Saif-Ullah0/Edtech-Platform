@@ -4,3 +4,9 @@ prisma/dev.db
 prisma/migrations/
 .DS_Store
 
+uploads/
+*.mp4
+*.pdf
+*.jpeg
+*.jpg
+*.png

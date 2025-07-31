@@ -25,22 +25,35 @@ enum ModuleType {
   QUIZ
 }
 
+// 🆕 NEW: Chapter types
+enum ChapterType {
+  TEXT
+  VIDEO
+  PDF
+  QUIZ
+}
+
 model User {
   id        Int          @id @default(autoincrement())
   name      String
   email     String       @unique
   password  String
   role      Role         @default(USER)
+  
+  // 🆕 NEW: User status field (from ETP-001)
   status    String       @default("ACTIVE") // "ACTIVE", "BANNED", "DELETED"
-
+  
   courses   Enrollment[] 
   orders    Order[]      
   createdAt DateTime     @default(now())
   
-  // NEW: Module-wise payment relations
+  // Module-wise payment relations
   moduleEnrollments ModuleEnrollment[]
   bundles           Bundle[]
   bundlePurchases   BundlePurchase[]
+  
+  // 🆕 NEW: Chapter progress tracking
+  chapterProgress   ChapterProgress[]
 }
 
 model Category {
@@ -62,7 +75,8 @@ model Course {
   price       Float
   imageUrl    String?
   isDeleted   Boolean  @default(false)
-
+  
+  // 🆕 NEW: Course publishing and pricing fields (from ETP-001)
   publishStatus String  @default("DRAFT")     // "DRAFT" or "PUBLISHED"
   isPaid        Boolean @default(false)       // true = paid course, false = free
   
@@ -80,30 +94,30 @@ model Course {
 model Module {
   id          Int        @id @default(autoincrement())
   title       String
-  content     String?
-  type        ModuleType @default(TEXT)
+  
+  // 🚨 REMOVED: content, videoUrl, videoSize, videoDuration, thumbnailUrl
+  // These fields are now in Chapter model
+  
+  type        ModuleType @default(TEXT) // Keep for backward compatibility
   orderIndex  Int        @default(0)
   
-  // NEW: Module pricing fields
+  // Module pricing fields (keep these)
   price       Float      @default(0)        // Individual module price
   isFree      Boolean    @default(false)    // Whether module is free
   isPublished Boolean    @default(false)    // Whether module is available for purchase
-  
-  // Video-specific fields
-  videoUrl    String?
-  videoSize   BigInt?
-  videoDuration Int?
-  thumbnailUrl String?
   
   notes       Note[]
 
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
   
+  // 🆕 NEW: Chapters relationship (OPTIONAL - modules can have 0 chapters)
+  chapters    Chapter[]
+  
   // Existing relations
   moduleProgress ModuleProgress[]
   
-  // NEW: Module payment relations
+  // Module payment relations
   moduleEnrollments ModuleEnrollment[]
   bundleItems       BundleItem[]
   
@@ -111,7 +125,56 @@ model Module {
   updatedAt   DateTime @updatedAt @default(now())
 }
 
-// NEW: Individual module enrollments/purchases
+// 🆕 NEW: Chapter model
+model Chapter {
+  id          String      @id @default(cuid())
+  title       String
+  description String?
+  content     String?     // For text chapters
+  videoUrl    String?     // For video chapters
+  duration    Int?        // In seconds for videos
+  order       Int         @default(0)
+  type        ChapterType @default(TEXT)
+  publishStatus String    @default("DRAFT") // "DRAFT" or "PUBLISHED"
+  
+  // Video-specific fields (moved from Module)
+  videoSize     BigInt?
+  videoDuration Int?
+  thumbnailUrl  String?
+  
+  // REQUIRED: Chapter must belong to a module
+  moduleId    Int
+  module      Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  // 🆕 NEW: Chapter progress tracking
+  chapterProgress ChapterProgress[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("chapters")
+}
+
+// 🆕 NEW: Chapter progress tracking
+model ChapterProgress {
+  id                   String    @id @default(cuid())
+  userId               Int
+  chapterId            String
+  isCompleted          Boolean   @default(false)
+  watchTime            Int       @default(0)
+  completionPercentage Float     @default(0.0)
+  completedAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter              Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chapterId])
+  @@map("chapter_progress")
+}
+
+// Individual module enrollments/purchases
 model ModuleEnrollment {
   id        Int      @id @default(autoincrement())
   userId    Int
@@ -135,7 +198,7 @@ model ModuleEnrollment {
   @@map("module_enrollments")
 }
 
-// NEW: User-created bundles
+// User-created bundles
 model Bundle {
   id          Int      @id @default(autoincrement())
   name        String
@@ -160,7 +223,7 @@ model Bundle {
   @@map("bundles")
 }
 
-// NEW: Items in a bundle
+// Items in a bundle
 model BundleItem {
   id       Int @id @default(autoincrement())
   bundleId Int
@@ -174,7 +237,7 @@ model BundleItem {
   @@map("bundle_items")
 }
 
-// NEW: Bundle purchases
+// Bundle purchases
 model BundlePurchase {
   id                   Int      @id @default(autoincrement())
   bundleId             Int
@@ -231,7 +294,7 @@ model Enrollment {
   progress     Float?   @default(0.0)
   lastAccessed DateTime @default(now()) @updatedAt
   
-  // NEW: Payment tracking for course enrollments
+  // Payment tracking for course enrollments
   paymentTransactionId String?
 
   user   User   @relation(fields: [userId], references: [id])
@@ -243,7 +306,7 @@ model Enrollment {
   @@unique([userId, courseId])
 }
 
-// Module progress tracking
+// Module progress tracking (keep for backward compatibility)
 model ModuleProgress {
   id                   Int       @id @default(autoincrement())
   enrollmentId         Int
