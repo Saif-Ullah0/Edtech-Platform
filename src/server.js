@@ -27,6 +27,8 @@ const progressRoutes = require('./routes/progressRoutes');
 const requireAuth = require('./middlewares/requireAuth');
 const requireAdmin = require('./middlewares/requireAdmin');
 const notesRoutes = require('./routes/notesRoutes');
+const chapterRoutes = require('./routes/chapterRoutes');
+const chapterAdminRoutes = require('./routes/admin/chapterAdminRoutes');
 
 const startOrderCleanupJob = require('./cron/orderCleanupJob');
 startOrderCleanupJob();
@@ -86,6 +88,9 @@ app.use('/api/admin/modules', requireAuth, requireAdmin, adminModuleRoutes);
 app.use('/api/admin/dashboard', requireAuth, requireAdmin, adminDashboardRoutes);
 app.use('/api/admin/enrollments', requireAuth, requireAdmin, adminEnrollmentRoutes);
 app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
+
+app.use('/api/chapters', chapterRoutes);
+app.use('/api/admin/chapters', chapterAdminRoutes);
 
 app.get('/api/me', requireAuth, (req, res) => {
   try {
