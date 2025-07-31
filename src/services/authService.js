@@ -33,10 +33,28 @@ const registerUser = async ({name, email, password}) => {
 
 const loginUser = async ({email, password}) => {
     const user = await prisma.user.findUnique({
-        where: { email }
+        where: { email },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            password: true,
+            role: true,
+            status: true    // 🆕 ADD THIS LINE
+        }
     });
+    
     if (!user) {
         throw new Error('User not found');
+    }
+
+    // 🆕 ADD THESE STATUS CHECKS
+    if (user.status === 'BANNED') {
+        throw new Error('Account has been banned. Please contact support.');
+    }
+
+    if (user.status === 'DELETED') {
+        throw new Error('Account has been deactivated.');
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -50,12 +68,11 @@ const loginUser = async ({email, password}) => {
             id: user.id,
             name: user.name,
             email: user.email,
-            role: user.role
+            role: user.role,
+            status: user.status  // 🆕 ADD THIS LINE
         },
         token
     };
-
-
 }
 
 const getUserById = async (userId) => {

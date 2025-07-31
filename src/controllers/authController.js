@@ -85,12 +85,22 @@ const login = async (req, res) => {
         email: true,
         password: true,
         role: true,
+        status: true,    // 🆕 ADD THIS LINE
         createdAt: true,
       },
     });
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // 🆕 ADD THESE STATUS CHECKS
+    if (user.status === 'BANNED') {
+      return res.status(403).json({ error: 'Account has been banned. Please contact support.' });
+    }
+
+    if (user.status === 'DELETED') {
+      return res.status(403).json({ error: 'Account has been deactivated.' });
     }
 
     // Check password
