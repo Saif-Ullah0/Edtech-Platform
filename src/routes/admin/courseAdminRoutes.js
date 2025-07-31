@@ -4,11 +4,13 @@ const requireAuth = require('../../middlewares/requireAuth');
 const requireAdmin = require('../../middlewares/requireAdmin');
 const courseController = require('../../controllers/courseController');
 
-router.get('/', requireAuth, requireAdmin, courseController.getCourses);
+// 🆕 FIXED: Use admin-specific functions
+router.get('/', requireAuth, requireAdmin, courseController.getCoursesForAdmin);
 
 router.post('/', requireAuth, requireAdmin, courseController.createCourse);
 
-router.get('/:id', requireAuth, requireAdmin, courseController.getCourseById);
+// 🆕 FIXED: Use admin-specific functions  
+router.get('/:id', requireAuth, requireAdmin, courseController.getCourseByIdForAdmin);
 
 router.put('/:id', requireAuth, requireAdmin, courseController.updateCourse);
 

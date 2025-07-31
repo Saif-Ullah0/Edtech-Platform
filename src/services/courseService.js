@@ -121,7 +121,7 @@ const getAllCoursesForAdmin = async (categorySlug) => {
         isDeleted: false,
       };
 
-  return await prisma.course.findMany({
+  const courses = await prisma.course.findMany({
     where: filter,
     include: {
       category: {
@@ -143,7 +143,7 @@ const getAllCoursesForAdmin = async (categorySlug) => {
           orderIndex: true,
           videoUrl: true,
           videoDuration: true,
-          videoSize: true,
+          videoSize: true,        // 🚨 This is BigInt!
           thumbnailUrl: true,
           price: true,
           isFree: true,
@@ -157,7 +157,25 @@ const getAllCoursesForAdmin = async (categorySlug) => {
       createdAt: 'desc'
     }
   });
+
+  // 🆕 FIX: Convert BigInt fields to strings for JSON serialization
+  if (courses) {
+    courses.forEach(course => {
+      if (course.modules) {
+        course.modules = course.modules.map(module => ({
+          ...module,
+          videoSize: module.videoSize ? module.videoSize.toString() : null, // 🆕 Convert BigInt to string
+          price: module.price || 0,
+          isFree: module.isFree || false,
+          isPublished: module.isPublished !== false
+        }));
+      }
+    });
+  }
+
+  return courses;
 };
+
 
 const getCourseById = async (id) => {
   const course = await prisma.course.findUnique({

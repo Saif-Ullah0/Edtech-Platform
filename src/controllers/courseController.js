@@ -12,17 +12,7 @@ const getCourses = async (req, res) => {
   }
 };
 
-// 🆕 NEW: Admin endpoint - all courses including drafts
-const getCoursesForAdmin = async (req, res) => {
-  try {
-    const { category } = req.query;
-    const courses = await courseService.getAllCoursesForAdmin(category);
-    res.status(200).json(courses);
-  } catch (error) {
-    console.error('Error fetching courses for admin:', error);
-    res.status(500).json({ error: 'Failed to fetch courses' });
-  }
-};
+
 
 const getCourseById = async (req, res) => {
   try {
@@ -39,20 +29,6 @@ const getCourseById = async (req, res) => {
     res.status(200).json(course);
   } catch (error) {
     console.error('Error fetching course:', error);
-    res.status(500).json({ error: 'Failed to fetch course details' });
-  }
-};
-
-// 🆕 NEW: Admin endpoint to get course (including drafts)
-const getCourseByIdForAdmin = async (req, res) => {
-  try {
-    const course = await courseService.getCourseByIdForAdmin(parseInt(req.params.id));
-    if (!course || course.isDeleted) {
-      return res.status(404).json({ error: 'Course not found' });
-    }
-    res.status(200).json(course);
-  } catch (error) {
-    console.error('Error fetching course for admin:', error);
     res.status(500).json({ error: 'Failed to fetch course details' });
   }
 };
@@ -145,6 +121,32 @@ const searchCourses = async (req, res) => {
   } catch (error) {
     console.error('Error searching courses:', error);
     res.status(500).json({ error: 'Failed to search courses' });
+  }
+};
+
+
+// 🆕 NEW: Admin endpoint to get course (including drafts)
+const getCourseByIdForAdmin = async (req, res) => {
+  try {
+    const course = await courseService.getCourseByIdForAdmin(parseInt(req.params.id));
+    if (!course || course.isDeleted) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+    res.status(200).json(course);
+  } catch (error) {
+    console.error('Error fetching course for admin:', error);
+    res.status(500).json({ error: 'Failed to fetch course details' });
+  }
+};
+// 🆕 NEW: Admin endpoint - all courses including drafts
+const getCoursesForAdmin = async (req, res) => {
+  try {
+    const { category } = req.query;
+    const courses = await courseService.getAllCoursesForAdmin(category);
+    res.status(200).json(courses);
+  } catch (error) {
+    console.error('Error fetching courses for admin:', error);
+    res.status(500).json({ error: 'Failed to fetch courses' });
   }
 };
 
