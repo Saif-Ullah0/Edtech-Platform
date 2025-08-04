@@ -30,6 +30,9 @@ const notesRoutes = require('./routes/notesRoutes');
 const chapterRoutes = require('./routes/chapterRoutes');
 const chapterAdminRoutes = require('./routes/admin/chapterAdminRoutes');
 
+const bundleRoutes = require('./routes/bundleRoutes');
+const bundleAdminRoutes = require('./routes/admin/bundleAdminRoutes');
+
 const startOrderCleanupJob = require('./cron/orderCleanupJob');
 startOrderCleanupJob();
 
@@ -91,6 +94,9 @@ app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
 
 app.use('/api/chapters', chapterRoutes);
 app.use('/api/admin/chapters', chapterAdminRoutes);
+
+app.use('/api/bundles', bundleRoutes);
+app.use('/api/admin/bundles', bundleAdminRoutes);
 
 app.get('/api/me', requireAuth, (req, res) => {
   try {
