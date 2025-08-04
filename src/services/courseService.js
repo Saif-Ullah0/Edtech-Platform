@@ -4,7 +4,7 @@ const searchCourses = async (query) => {
   return await prisma.course.findMany({
     where: {
       isDeleted: false,
-      publishStatus: "PUBLISHED", // 🆕 Only show published courses
+      publishStatus: "PUBLISHED", // Only show published courses
       OR: [
         {
           title: {
@@ -44,8 +44,8 @@ const searchCourses = async (query) => {
       description: true,
       price: true,
       imageUrl: true,
-      publishStatus: true, // 🆕 Include publish status
-      isPaid: true,        // 🆕 Include pricing info
+      publishStatus: true,
+      isPaid: true,
       category: {
         select: {
           name: true,
@@ -55,19 +55,19 @@ const searchCourses = async (query) => {
   });
 };
 
-// 🆕 UPDATED: Only show published courses to students
+// FIXED: getAllCourses now works with Chapter system
 const getAllCourses = async (categorySlug) => {
   const filter = categorySlug
     ? {
         isDeleted: false,
-        publishStatus: "PUBLISHED", // 🆕 Only published courses
+        publishStatus: "PUBLISHED",
         category: {
           slug: categorySlug,
         },
       }
     : {
         isDeleted: false,
-        publishStatus: "PUBLISHED", // 🆕 Only published courses
+        publishStatus: "PUBLISHED",
       };
 
   return await prisma.course.findMany({
@@ -90,13 +90,33 @@ const getAllCourses = async (categorySlug) => {
         select: {
           id: true,
           title: true,
-          content: true,
           type: true,
           orderIndex: true,
-          videoUrl: true,
-          videoDuration: true,
-          videoSize: true,
-          thumbnailUrl: true,
+          
+          // 🆕 NEW: Include chapters instead of old content fields
+          chapters: {
+            where: {
+              publishStatus: 'PUBLISHED'
+            },
+            orderBy: {
+              order: 'asc'
+            },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              content: true,
+              videoUrl: true,
+              videoDuration: true,
+              videoSize: true,
+              thumbnailUrl: true,
+              type: true,
+              order: true,
+              publishStatus: true
+            }
+          },
+          
+          // Keep module-level fields
           price: true,
           isFree: true,
           isPublished: true,
@@ -108,7 +128,7 @@ const getAllCourses = async (categorySlug) => {
   });
 };
 
-// 🆕 NEW: Admin version - shows all courses including drafts
+// FIXED: Admin version with all courses
 const getAllCoursesForAdmin = async (categorySlug) => {
   const filter = categorySlug
     ? {
@@ -138,13 +158,29 @@ const getAllCoursesForAdmin = async (categorySlug) => {
         select: {
           id: true,
           title: true,
-          content: true,
           type: true,
           orderIndex: true,
-          videoUrl: true,
-          videoDuration: true,
-          videoSize: true,        // 🚨 This is BigInt!
-          thumbnailUrl: true,
+          
+          // 🆕 NEW: Include chapters (admin sees all)
+          chapters: {
+            orderBy: {
+              order: 'asc'
+            },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              content: true,
+              videoUrl: true,
+              videoDuration: true,
+              videoSize: true,
+              thumbnailUrl: true,
+              type: true,
+              order: true,
+              publishStatus: true
+            }
+          },
+          
           price: true,
           isFree: true,
           isPublished: true,
@@ -158,17 +194,18 @@ const getAllCoursesForAdmin = async (categorySlug) => {
     }
   });
 
-  // 🆕 FIX: Convert BigInt fields to strings for JSON serialization
+  // Convert BigInt fields in chapters
   if (courses) {
     courses.forEach(course => {
       if (course.modules) {
-        course.modules = course.modules.map(module => ({
-          ...module,
-          videoSize: module.videoSize ? module.videoSize.toString() : null, // 🆕 Convert BigInt to string
-          price: module.price || 0,
-          isFree: module.isFree || false,
-          isPublished: module.isPublished !== false
-        }));
+        course.modules.forEach(module => {
+          if (module.chapters) {
+            module.chapters = module.chapters.map(chapter => ({
+              ...chapter,
+              videoSize: chapter.videoSize ? chapter.videoSize.toString() : null
+            }));
+          }
+        });
       }
     });
   }
@@ -176,7 +213,7 @@ const getAllCoursesForAdmin = async (categorySlug) => {
   return courses;
 };
 
-
+// FIXED: getCourseById with Chapter system
 const getCourseById = async (id) => {
   const course = await prisma.course.findUnique({
     where: { id },
@@ -194,13 +231,32 @@ const getCourseById = async (id) => {
         select: {
           id: true,
           title: true,
-          content: true,
           type: true,
           orderIndex: true,
-          videoUrl: true,
-          videoDuration: true,
-          videoSize: true,
-          thumbnailUrl: true,
+          
+          // 🆕 NEW: Include chapters instead of old content fields
+          chapters: {
+            where: {
+              publishStatus: 'PUBLISHED' // Only published chapters for students
+            },
+            orderBy: {
+              order: 'asc'
+            },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              content: true,
+              videoUrl: true,
+              videoDuration: true,
+              videoSize: true,
+              thumbnailUrl: true,
+              type: true,
+              order: true,
+              publishStatus: true
+            }
+          },
+          
           price: true,
           isFree: true,
           isPublished: true,
@@ -211,25 +267,88 @@ const getCourseById = async (id) => {
     },
   });
 
+  // Convert BigInt fields in chapters
   if (course && course.modules) {
-    course.modules = course.modules.map(module => ({
-      ...module,
-      videoSize: module.videoSize ? module.videoSize.toString() : null,
-      price: module.price || 0,
-      isFree: module.isFree || false,
-      isPublished: module.isPublished !== false
-    }));
+    course.modules.forEach(module => {
+      if (module.chapters) {
+        module.chapters = module.chapters.map(chapter => ({
+          ...chapter,
+          videoSize: chapter.videoSize ? chapter.videoSize.toString() : null
+        }));
+      }
+    });
   }
 
   return course;
 };
 
-// 🆕 NEW: Admin version - can see draft courses
+// FIXED: Admin version can see draft chapters
 const getCourseByIdForAdmin = async (id) => {
-  // Same as getCourseById but without publishStatus filtering
-  return await getCourseById(id);
+  const course = await prisma.course.findUnique({
+    where: { id },
+    include: {
+      category: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true
+        }
+      },
+      modules: {
+        orderBy: { orderIndex: 'asc' },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          orderIndex: true,
+          
+          // 🆕 NEW: Admin sees all chapters (including drafts)
+          chapters: {
+            orderBy: {
+              order: 'asc'
+            },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              content: true,
+              videoUrl: true,
+              videoDuration: true,
+              videoSize: true,
+              thumbnailUrl: true,
+              type: true,
+              order: true,
+              publishStatus: true
+            }
+          },
+          
+          price: true,
+          isFree: true,
+          isPublished: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      },
+    },
+  });
+
+  // Convert BigInt fields in chapters
+  if (course && course.modules) {
+    course.modules.forEach(module => {
+      if (module.chapters) {
+        module.chapters = module.chapters.map(chapter => ({
+          ...chapter,
+          videoSize: chapter.videoSize ? chapter.videoSize.toString() : null
+        }));
+      }
+    });
+  }
+
+  return course;
 };
 
+// NEW: Get course with module ownership for specific user
 const getCourseByIdWithOwnership = async (courseId, userId) => {
   try {
     const course = await getCourseById(courseId);
@@ -238,6 +357,7 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
       return course;
     }
 
+    // Get user's module enrollments for this course
     const moduleEnrollments = await prisma.moduleEnrollment.findMany({
       where: {
         userId: userId,
@@ -252,6 +372,7 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
 
     const ownedModuleIds = moduleEnrollments.map(enrollment => enrollment.moduleId);
 
+    // Add ownership info to modules
     if (course.modules) {
       course.modules = course.modules.map(module => ({
         ...module,
@@ -266,14 +387,13 @@ const getCourseByIdWithOwnership = async (courseId, userId) => {
   }
 };
 
-// 🆕 UPDATED: Enhanced course creation with validation
 const createCourse = async (data) => {
-  // 🆕 Validate pricing logic
+  // Validate pricing logic
   if (data.isPaid && (!data.price || data.price <= 0)) {
     throw new Error('Paid courses must have a price greater than 0');
   }
   
-  // 🆕 Set price to 0 if course is not paid
+  // Set price to 0 if course is not paid
   if (!data.isPaid) {
     data.price = 0;
   }
@@ -281,14 +401,13 @@ const createCourse = async (data) => {
   return await prisma.course.create({ data });
 };
 
-// 🆕 UPDATED: Enhanced course update with validation
 const updateCourse = async (id, data) => {
-  // 🆕 Validate pricing logic
+  // Validate pricing logic
   if (data.isPaid && (!data.price || data.price <= 0)) {
     throw new Error('Paid courses must have a price greater than 0');
   }
   
-  // 🆕 Set price to 0 if course is not paid
+  // Set price to 0 if course is not paid
   if (data.isPaid === false) {
     data.price = 0;
   }
@@ -308,9 +427,9 @@ const softDeleteCourse = async (id) => {
 
 module.exports = {
   getAllCourses,
-  getAllCoursesForAdmin,        // 🆕 NEW
+  getAllCoursesForAdmin,
   getCourseById,
-  getCourseByIdForAdmin,        // 🆕 NEW
+  getCourseByIdForAdmin,
   getCourseByIdWithOwnership,
   createCourse,
   updateCourse,

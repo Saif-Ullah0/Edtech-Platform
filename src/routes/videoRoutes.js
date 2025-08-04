@@ -1,4 +1,4 @@
-// src/routes/videoRoutes.js
+// src/routes/videoRoutes.js - Updated for Chapter-based schema
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
@@ -13,14 +13,12 @@ const requireAuth = require('../middlewares/requireAuth');
 const requireAdmin = require('../middlewares/requireAdmin');
 
 // Enhanced multer setup with proper file organization
-// Replace the multer configuration with this fixed version:
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       let uploadPath;
       
       if (file.fieldname === 'video') {
-        // For now, use a single videos directory
         uploadPath = `uploads/videos`;
       } else if (file.fieldname === 'thumbnail') {
         uploadPath = 'uploads/videos/thumbnails';
@@ -66,24 +64,31 @@ router.get('/auth-test', requireAuth, (req, res) => {
   });
 });
 
-// VIDEO STREAMING ROUTE (ADD THIS!)
+// 🆕 UPDATED: Video streaming route for Chapter-based schema
 router.get('/stream/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`🎬 Streaming request for video ID: ${id}`);
 
-    // Get video module from database
-    const module = await prisma.module.findUnique({
-      where: { id: parseInt(id) }
+    // 🆕 NEW: Look for video in Chapter model (not Module)
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: id }, // Chapter IDs are strings in new schema
+      include: {
+        module: {
+          include: {
+            course: true
+          }
+        }
+      }
     });
 
-    if (!module || module.type !== 'VIDEO' || !module.videoUrl) {
-      console.log(`❌ Video not found: ID ${id}`);
+    if (!chapter || chapter.type !== 'VIDEO' || !chapter.videoUrl) {
+      console.log(`❌ Video chapter not found: ID ${id}`);
       return res.status(404).json({ error: 'Video not found' });
     }
 
     // Build file path - remove leading slash and convert to local path
-    const videoPath = module.videoUrl.replace(/^\/uploads\//, 'uploads/');
+    const videoPath = chapter.videoUrl.replace(/^\/uploads\//, 'uploads/');
     const fullVideoPath = path.join(process.cwd(), videoPath);
     
     console.log(`🔍 Looking for video at: ${fullVideoPath}`);
@@ -171,35 +176,39 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Get single video details
+// 🆕 UPDATED: Get single video details from Chapter
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const module = await prisma.module.findUnique({
-      where: { id: parseInt(id) },
+    const chapter = await prisma.chapter.findUnique({
+      where: { id: id },
       include: {
-        course: {
-          select: {
-            title: true,
-            slug: true,
-            id: true
+        module: {
+          include: {
+            course: {
+              select: {
+                title: true,
+                slug: true,
+                id: true
+              }
+            }
           }
         }
       }
     });
 
-    if (!module || module.type !== 'VIDEO') {
+    if (!chapter || chapter.type !== 'VIDEO') {
       return res.status(404).json({ error: 'Video not found' });
     }
 
-    // Convert BigInt to string
-    const formattedModule = {
-      ...module,
-      videoSize: module.videoSize?.toString()
+    // Convert BigInt to string if present
+    const formattedChapter = {
+      ...chapter,
+      videoSize: chapter.videoSize?.toString()
     };
 
-    res.json({ video: formattedModule });
+    res.json({ video: formattedChapter });
 
   } catch (error) {
     console.error('Error fetching video:', error);
@@ -207,7 +216,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Full upload route with database integration
+// 🆕 FIXED: Upload route for Chapter-based schema
 router.post('/upload', 
   requireAuth, 
   requireAdmin, 
@@ -217,7 +226,7 @@ router.post('/upload',
   ]),
   async (req, res) => {
     try {
-      console.log('Upload route reached!');
+      console.log('🚀 Upload route reached!');
       console.log('Request body:', req.body);
       console.log('Request files:', req.files);
       
@@ -249,36 +258,66 @@ router.post('/upload',
       const videoUrl = `/uploads/videos/${videoFile.filename}`;
       const thumbnailUrl = thumbnailFile ? `/uploads/videos/thumbnails/${thumbnailFile.filename}` : null;
       
-      // Create video module in database
-      const module = await prisma.module.create({
-        data: {
-          title,
-          content: content || '',
-          type: 'VIDEO',
-          courseId: parseInt(courseId),
-          orderIndex: orderIndex ? parseInt(orderIndex) : 0,
-          videoUrl,
-          videoSize: BigInt(videoFile.size),
-          videoDuration: 0, // We'll add metadata extraction later
-          thumbnailUrl
-        },
-        include: {
-          course: {
-            select: {
-              title: true,
-              slug: true
+      // 🆕 NEW: Create Module + Chapter (Chapter-based schema)
+      const result = await prisma.$transaction(async (tx) => {
+        // 1. Create/find Module (container for chapters)
+        const module = await tx.module.create({
+          data: {
+            title: title,
+            type: 'VIDEO',
+            courseId: parseInt(courseId),
+            orderIndex: orderIndex ? parseInt(orderIndex) : 0,
+            // 🆕 NEW: Module pricing fields (optional)
+            price: parseFloat(req.body.price) || 0,
+            isFree: req.body.isFree === 'true' || !req.body.price || req.body.price === '0',
+            isPublished: req.body.isPublished !== 'false',
+          },
+          include: {
+            course: {
+              select: {
+                title: true,
+                slug: true
+              }
             }
           }
-        }
+        });
+
+        // 2. Create Chapter with video data
+        const chapter = await tx.chapter.create({
+          data: {
+            title: title,
+            description: content || `Watch the ${title} video lesson`,
+            content: content || null,
+            videoUrl: videoUrl,
+            duration: 0, // You can add ffmpeg metadata extraction later
+            type: 'VIDEO',
+            publishStatus: 'PUBLISHED',
+            order: 1,
+            
+            // Video-specific fields
+            videoSize: BigInt(videoFile.size),
+            videoDuration: 0, // Add metadata extraction later
+            thumbnailUrl: thumbnailUrl,
+            
+            // Link to module
+            moduleId: module.id
+          }
+        });
+
+        return { module, chapter };
       });
       
-      console.log('✅ Video module created:', module.id);
+      console.log('✅ Video uploaded successfully:', {
+        moduleId: result.module.id,
+        chapterId: result.chapter.id
+      });
       
       res.status(201).json({
         message: 'Video uploaded and saved successfully!',
-        module: {
-          ...module,
-          videoSize: module.videoSize.toString() // Convert BigInt to string for JSON
+        module: result.module,
+        chapter: {
+          ...result.chapter,
+          videoSize: result.chapter.videoSize.toString() // Convert BigInt to string
         },
         fileInfo: {
           videoFile: {
@@ -297,7 +336,7 @@ router.post('/upload',
       });
       
     } catch (error) {
-      console.error('Upload error:', error);
+      console.error('❌ Upload error:', error);
       
       // Clean up uploaded files on error
       if (req.files?.video?.[0]) {
@@ -319,33 +358,48 @@ router.post('/upload',
   }
 );
 
-// Get videos for a course
+// 🆕 UPDATED: Get videos for a course (from Modules + Chapters)
 router.get('/course/:courseId', requireAuth, async (req, res) => {
   try {
     const { courseId } = req.params;
     
+    // Get modules with their video chapters
     const modules = await prisma.module.findMany({
       where: {
         courseId: parseInt(courseId),
         type: 'VIDEO'
       },
-      orderBy: {
-        orderIndex: 'asc'
-      },
       include: {
+        chapters: {
+          where: {
+            type: 'VIDEO'
+          },
+          orderBy: {
+            order: 'asc'
+          }
+        },
         course: {
           select: {
             title: true,
             slug: true
           }
         }
+      },
+      orderBy: {
+        orderIndex: 'asc'
       }
     });
     
-    // Convert BigInt to string for JSON serialization
+    // Transform to include video data from chapters
     const formattedModules = modules.map(module => ({
       ...module,
-      videoSize: module.videoSize?.toString()
+      // Get video data from first chapter
+      videoUrl: module.chapters[0]?.videoUrl,
+      videoDuration: module.chapters[0]?.videoDuration,
+      videoSize: module.chapters[0]?.videoSize?.toString(),
+      thumbnailUrl: module.chapters[0]?.thumbnailUrl,
+      content: module.chapters[0]?.content || module.chapters[0]?.description,
+      chapterId: module.chapters[0]?.id, // For streaming
     }));
     
     res.json({
@@ -363,35 +417,54 @@ router.get('/course/:courseId', requireAuth, async (req, res) => {
   }
 });
 
-// Update video details
+// 🆕 UPDATED: Update video details (Module + Chapter)
 router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, content, orderIndex } = req.body;
 
+    // Find module with its chapters
     const module = await prisma.module.findUnique({
-      where: { id: parseInt(id) }
+      where: { id: parseInt(id) },
+      include: {
+        chapters: {
+          where: { type: 'VIDEO' }
+        }
+      }
     });
 
     if (!module || module.type !== 'VIDEO') {
-      return res.status(404).json({ error: 'Video not found' });
+      return res.status(404).json({ error: 'Video module not found' });
     }
 
-    const updatedModule = await prisma.module.update({
-      where: { id: parseInt(id) },
-      data: {
-        ...(title && { title }),
-        ...(content !== undefined && { content }),
-        ...(orderIndex !== undefined && { orderIndex: parseInt(orderIndex) })
+    // Update both module and its first video chapter
+    const result = await prisma.$transaction(async (tx) => {
+      // Update module
+      const updatedModule = await tx.module.update({
+        where: { id: parseInt(id) },
+        data: {
+          ...(title && { title }),
+          ...(orderIndex !== undefined && { orderIndex: parseInt(orderIndex) })
+        }
+      });
+
+      // Update chapter if exists
+      if (module.chapters[0]) {
+        await tx.chapter.update({
+          where: { id: module.chapters[0].id },
+          data: {
+            ...(title && { title }),
+            ...(content !== undefined && { content, description: content })
+          }
+        });
       }
+
+      return updatedModule;
     });
 
     res.json({
       message: 'Video updated successfully',
-      module: {
-        ...updatedModule,
-        videoSize: updatedModule.videoSize?.toString()
-      }
+      module: result
     });
 
   } catch (error) {
@@ -400,40 +473,50 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete video
+// 🆕 UPDATED: Delete video (Module + Chapter + Files)
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Get module with chapters
     const module = await prisma.module.findUnique({
-      where: { id: parseInt(id) }
+      where: { id: parseInt(id) },
+      include: {
+        chapters: {
+          where: { type: 'VIDEO' }
+        }
+      }
     });
     
     if (!module || module.type !== 'VIDEO') {
       return res.status(404).json({
-        error: 'Video not found'
+        error: 'Video module not found'
       });
     }
     
-    // Delete from database
+    // Collect file paths before deletion
+    const filesToDelete = [];
+    module.chapters.forEach(chapter => {
+      if (chapter.videoUrl) {
+        filesToDelete.push(chapter.videoUrl.replace('/uploads/', 'uploads/'));
+      }
+      if (chapter.thumbnailUrl) {
+        filesToDelete.push(chapter.thumbnailUrl.replace('/uploads/', 'uploads/'));
+      }
+    });
+    
+    // Delete from database (chapters will be deleted via cascade)
     await prisma.module.delete({
       where: { id: parseInt(id) }
     });
     
     // Delete physical files
-    if (module.videoUrl) {
-      const videoPath = module.videoUrl.replace('/uploads/', 'uploads/');
-      if (fs.existsSync(videoPath)) {
-        fs.unlinkSync(videoPath);
+    filesToDelete.forEach(filePath => {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`🗑️ Deleted file: ${filePath}`);
       }
-    }
-    
-    if (module.thumbnailUrl) {
-      const thumbnailPath = module.thumbnailUrl.replace('/uploads/', 'uploads/');
-      if (fs.existsSync(thumbnailPath)) {
-        fs.unlinkSync(thumbnailPath);
-      }
-    }
+    });
     
     res.json({
       message: 'Video deleted successfully'
