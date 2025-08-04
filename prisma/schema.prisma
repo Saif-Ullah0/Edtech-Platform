@@ -85,6 +85,7 @@ model Course {
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
   notes       Note[]
+  courseBundleItems CourseBundleItem[]
 
   modules     Module[]
   enrollments Enrollment[]
@@ -208,21 +209,49 @@ model Bundle {
   discount    Float    @default(0) // Percentage discount
   finalPrice  Float    // After discount
   
+  // 🆕 NEW: Bundle type and promotional fields
+  type        String   @default("MODULE") // "MODULE" or "COURSE"
+  
   // Bundle status
   isActive    Boolean  @default(true)
   isPurchased Boolean  @default(false)
   
-  // Relations
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items       BundleItem[]
-  purchases   BundlePurchase[]
+  // 🆕 NEW: Promotional fields
+  isFeatured  Boolean  @default(false)  // Admin can mark as featured
+  isPopular   Boolean  @default(false)  // Automatically determined by sales
   
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  // 🆕 NEW: Analytics fields
+  salesCount  Int      @default(0)      // Number of times purchased
+  revenue     Float    @default(0)      // Total revenue generated
+  viewCount   Int      @default(0)      // Number of times viewed
+  
+  // 🆕 NEW: Admin promotion fields
+  featuredOrder Int?                    // Order in featured section (null = not featured)
+  promotedUntil DateTime?               // Featured until this date
+  
+  // Relations
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moduleItems  BundleItem[]      // Existing module items
+  courseItems  CourseBundleItem[] // 🆕 NEW: Course items
+  purchases    BundlePurchase[]
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@map("bundles")
 }
-
+model CourseBundleItem {
+  id       Int @id @default(autoincrement())
+  bundleId Int
+  courseId Int
+  
+  // Relations
+  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  @@unique([bundleId, courseId])
+  @@map("course_bundle_items")
+}
 // Items in a bundle
 model BundleItem {
   id       Int @id @default(autoincrement())
@@ -237,7 +266,6 @@ model BundleItem {
   @@map("bundle_items")
 }
 
-// Bundle purchases
 model BundlePurchase {
   id                   Int      @id @default(autoincrement())
   bundleId             Int
@@ -246,6 +274,10 @@ model BundlePurchase {
   purchasePrice        Float
   discount             Float
   finalPrice           Float
+  
+  // 🆕 NEW: Analytics fields
+  bundleType           String   // "MODULE" or "COURSE"
+  itemCount            Int      // Number of items in bundle
   
   // Relations
   bundle    Bundle @relation(fields: [bundleId], references: [id])
