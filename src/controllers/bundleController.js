@@ -1,4 +1,4 @@
-// backend/src/controllers/bundleController.js - CREATE THIS FILE
+// backend/src/controllers/bundleController.js - CLEAN JAVASCRIPT VERSION
 const bundleService = require('../services/bundleService');
 const Stripe = require('stripe');
 
@@ -129,13 +129,22 @@ const createModuleBundle = async (req, res) => {
     const userId = req.user?.userId;
     const bundleData = req.body;
 
-    if (!bundleData.name || !bundleData.moduleIds || bundleData.moduleIds.length < 2) {
+    console.log('🔧 Creating module bundle:', {
+      userId,
+      bundleName: bundleData.name,
+      moduleIds: bundleData.moduleIds,
+      discount: bundleData.discount
+    });
+
+    if (!bundleData.name || !bundleData.moduleIds || bundleData.moduleIds.length < 1) {
       return res.status(400).json({ 
-        error: 'Bundle name and at least 2 modules are required' 
+        error: 'Bundle name and at least 1 module are required' 
       });
     }
 
     const bundle = await bundleService.createModuleBundle(userId, bundleData);
+
+    console.log('✅ Module bundle created successfully:', bundle.id);
 
     res.status(201).json({
       success: true,
@@ -144,7 +153,7 @@ const createModuleBundle = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating module bundle:', error);
+    console.error('❌ Error creating module bundle:', error);
     res.status(500).json({ 
       error: 'Failed to create module bundle',
       message: error.message 
@@ -157,13 +166,22 @@ const createCourseBundle = async (req, res) => {
     const userId = req.user?.userId;
     const bundleData = req.body;
 
-    if (!bundleData.name || !bundleData.courseIds || bundleData.courseIds.length < 2) {
+    console.log('🔧 Creating course bundle:', {
+      userId,
+      bundleName: bundleData.name,
+      courseIds: bundleData.courseIds,
+      discount: bundleData.discount
+    });
+
+    if (!bundleData.name || !bundleData.courseIds || bundleData.courseIds.length < 1) {
       return res.status(400).json({ 
-        error: 'Bundle name and at least 2 courses are required' 
+        error: 'Bundle name and at least 1 course are required' 
       });
     }
 
     const bundle = await bundleService.createCourseBundle(userId, bundleData);
+
+    console.log('✅ Course bundle created successfully:', bundle.id);
 
     // Calculate savings info for response
     const savings = {
@@ -181,7 +199,7 @@ const createCourseBundle = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating course bundle:', error);
+    console.error('❌ Error creating course bundle:', error);
     res.status(500).json({ 
       error: 'Failed to create course bundle',
       message: error.message 
@@ -241,7 +259,7 @@ const purchaseBundle = async (req, res) => {
     await bundleService.incrementViewCount(bundleId);
 
     // Create Stripe checkout session
-    const itemCount = bundle.type === 'MODULE' ? bundle.bundle_items?.length : bundle.course_bundle_items?.length;
+    const itemCount = bundle.type === 'MODULE' ? bundle.moduleItems?.length : bundle.courseItems?.length;
     
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],

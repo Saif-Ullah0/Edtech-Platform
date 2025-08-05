@@ -1,4 +1,4 @@
-// backend/src/services/bundleService.js - NEW FILE
+// backend/src/services/bundleService.js - FIXED VERSION
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -47,8 +47,8 @@ class BundleService {
           }
         });
 
-        // Create bundle items
-        await tx.bundle_items.createMany({
+        // ✅ FIXED: Use model name (bundleItem) not table name (bundle_items)
+        await tx.bundleItem.createMany({
           data: moduleIds.map(moduleId => ({
             bundleId: newBundle.id,
             moduleId
@@ -103,8 +103,8 @@ class BundleService {
           }
         });
 
-        // Create course bundle items
-        await tx.course_bundle_items.createMany({
+        // ✅ FIXED: Use model name (courseBundleItem) not table name (course_bundle_items)
+        await tx.courseBundleItem.createMany({
           data: courseIds.map(courseId => ({
             bundleId: newBundle.id,
             courseId
@@ -151,7 +151,8 @@ class BundleService {
         where: whereClause,
         include: {
           user: { select: { id: true, name: true, email: true } },
-         bundle_items: {
+          // ✅ FIXED: Use correct relation names from schema
+          moduleItems: {
             include: {
               module: {
                 include: { 
@@ -160,7 +161,7 @@ class BundleService {
               }
             }
           },
-        course_bundle_items: {
+          courseItems: {
             include: {
               course: { 
                 select: { 
@@ -396,8 +397,8 @@ class BundleService {
 
       // Process purchase in transaction
       const result = await prisma.$transaction(async (tx) => {
-        // Create bundle purchase record
-        const purchase = await tx.bundle_purchases.create({
+        // ✅ FIXED: Use model name (bundlePurchase) not table name (bundle_purchases)
+        const purchase = await tx.bundlePurchase.create({
           data: {
             bundleId,
             userId,
@@ -430,7 +431,8 @@ class BundleService {
             completed: false
           }));
 
-          await tx.module_enrollments.createMany({
+          // ✅ FIXED: Use model name (moduleEnrollment) not table name (module_enrollments)
+          await tx.moduleEnrollment.createMany({
             data: moduleEnrollments,
             skipDuplicates: true
           });
