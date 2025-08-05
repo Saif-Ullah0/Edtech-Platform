@@ -108,7 +108,7 @@ const getAllCourses = async (categorySlug) => {
               content: true,
               videoUrl: true,
               videoDuration: true,
-              videoSize: true,
+              //ideoSize: true,
               thumbnailUrl: true,
               type: true,
               order: true,
