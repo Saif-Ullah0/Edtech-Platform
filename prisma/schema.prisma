@@ -96,29 +96,32 @@ model Module {
   id          Int        @id @default(autoincrement())
   title       String
   
-  // 🚨 REMOVED: content, videoUrl, videoSize, videoDuration, thumbnailUrl
-  // These fields are now in Chapter model
+  // 🆕 ADD: Description field for better admin management
+  description String?
   
-  type        ModuleType @default(TEXT) // Keep for backward compatibility
+  // 🆕 ADD: Slug for SEO-friendly URLs
+  slug        String?    @unique
+  
+  type        ModuleType @default(TEXT)
   orderIndex  Int        @default(0)
   
   // Module pricing fields (keep these)
-  price       Float      @default(0)        // Individual module price
-  isFree      Boolean    @default(false)    // Whether module is free
-  isPublished Boolean    @default(false)    // Whether module is available for purchase
+  price       Float      @default(0)
+  isFree      Boolean    @default(false)
+  isPublished Boolean    @default(false)
+  
+  // 🆕 ADD: Publishing status to match Course and Chapter
+  publishStatus String   @default("DRAFT") // "DRAFT" or "PUBLISHED"
   
   notes       Note[]
 
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
   
-  // 🆕 NEW: Chapters relationship (OPTIONAL - modules can have 0 chapters)
   chapters    Chapter[]
   
   // Existing relations
   moduleProgress ModuleProgress[]
-  
-  // Module payment relations
   moduleEnrollments ModuleEnrollment[]
   bundleItems       BundleItem[]
   
