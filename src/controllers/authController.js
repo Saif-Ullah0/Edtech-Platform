@@ -58,7 +58,7 @@ const register = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 3600000, // 1 hour
+      maxAge: 360000000, // 1 hour
     });
 
     res.status(201).json({
@@ -117,7 +117,7 @@ const login = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 3600000, // 1 hour
+      maxAge: 360000000, // 1 hour
     });
 
     res.json({
