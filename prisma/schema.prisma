@@ -51,9 +51,11 @@ model User {
   moduleEnrollments ModuleEnrollment[]
   bundles           Bundle[]
   bundlePurchases   BundlePurchase[]
-  
+  canCreatePublicBundles Boolean @default(false) // Only admins or approved users can create public bundles
+
   // 🆕 NEW: Chapter progress tracking
   chapterProgress   ChapterProgress[]
+  
 }
 
 model Category {
@@ -227,7 +229,8 @@ model Bundle {
   salesCount  Int      @default(0)      // Number of times purchased
   revenue     Float    @default(0)      // Total revenue generated
   viewCount   Int      @default(0)      // Number of times viewed
-  
+  isPublic    Boolean  @default(false)  // Controls marketplace visibility
+
   // 🆕 NEW: Admin promotion fields
   featuredOrder Int?                    // Order in featured section (null = not featured)
   promotedUntil DateTime?               // Featured until this date
