@@ -1,0 +1,682 @@
+// backend/prisma/seed.js - Enhanced for Learning Interface Testing
+const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcrypt');
+
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('🌱 Starting database seeding...');
+
+  // Create users
+  const hashedPassword = await bcrypt.hash('admin123', 10);
+  let adminUser = await prisma.user.findUnique({
+    where: { email: 'admin@example.com' }
+  });
+
+  if (!adminUser) {
+    adminUser = await prisma.user.create({
+      data: {
+        name: 'Admin User',
+        email: 'admin@example.com',
+        password: hashedPassword,
+        role: 'ADMIN'
+      }
+    });
+    console.log('✅ Admin user created:', adminUser.email);
+  } else {
+    console.log('ℹ️ Admin user already exists:', adminUser.email);
+  }
+
+  const regularPassword = await bcrypt.hash('user123', 10);
+  let regularUser = await prisma.user.findUnique({
+    where: { email: 'user@example.com' }
+  });
+
+  if (!regularUser) {
+    regularUser = await prisma.user.create({
+      data: {
+        name: 'John Doe',
+        email: 'user@example.com', 
+        password: regularPassword,
+        role: 'USER'
+      }
+    });
+    console.log('✅ Regular user created:', regularUser.email);
+  } else {
+    console.log('ℹ️ Regular user already exists:', regularUser.email);
+  }
+
+  let testUser = await prisma.user.findUnique({
+    where: { email: 'test@example.com' }
+  });
+
+  if (!testUser) {
+    testUser = await prisma.user.create({
+      data: {
+        name: 'Test User',
+        email: 'test@example.com',
+        password: await bcrypt.hash('test123', 10),
+        role: 'USER'
+      }
+    });
+    console.log('✅ Test user created:', testUser.email);
+  } else {
+    console.log('ℹ️ Test user already exists:', testUser.email);
+  }
+
+  // Create categories
+  const categories = [
+    {
+      name: 'Web Development',
+      slug: 'web-development',
+      description: 'Learn modern web development technologies',
+      imageUrl: 'https://images.unsplash.com/photo-1547658719-da2b51169166?w=800&h=400&fit=crop'
+    },
+    {
+      name: 'Mobile Development',
+      slug: 'mobile-development',
+      description: 'Build mobile applications for iOS and Android',
+      imageUrl: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=800&h=400&fit=crop'
+    },
+    {
+      name: 'Data Science',
+      slug: 'data-science',
+      description: 'Analyze data and build machine learning models',
+      imageUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&h=400&fit=crop'
+    },
+    {
+      name: 'UI/UX Design',
+      slug: 'ui-ux-design',
+      description: 'Create beautiful and user-friendly interfaces',
+      imageUrl: 'https://images.unsplash.com/photo-1581291518857-4e27b48ff24e?w=800&h=400&fit=crop'
+    }
+  ];
+
+  for (const categoryData of categories) {
+    await prisma.category.upsert({
+      where: { slug: categoryData.slug },
+      update: categoryData,
+      create: categoryData
+    });
+  }
+
+  console.log('✅ Categories ready');
+
+  const webDevCategory = await prisma.category.findUnique({ where: { slug: 'web-development' } });
+  const dataCategory = await prisma.category.findUnique({ where: { slug: 'data-science' } });
+  const designCategory = await prisma.category.findUnique({ where: { slug: 'ui-ux-design' } });
+
+  // Clear existing data for clean seeding
+  console.log('🧹 Cleaning existing course data...');
+  await prisma.chapterProgress.deleteMany({});
+  await prisma.chapter.deleteMany({});
+  await prisma.moduleOwnership.deleteMany({});
+  await prisma.module.deleteMany({});
+  await prisma.enrollment.deleteMany({});
+  await prisma.course.deleteMany({});
+
+  // Create courses with complete module and chapter structure
+  console.log('📚 Creating courses with complete structure...');
+
+  // ===================================
+  // COURSE 1: FREE COURSE (Full Access)
+  // ===================================
+  const freeCourse = await prisma.course.create({
+    data: {
+      title: 'Python Basics - Free Course',
+      slug: 'python-basics-free',
+      description: 'Learn Python programming from scratch. Completely free course to get started with programming.',
+      price: 0,
+      imageUrl: 'https://images.unsplash.com/photo-1526379879527-8559ecfcaec0?w=800&h=400&fit=crop',
+      categoryId: dataCategory.id
+    }
+  });
+
+  // Free course modules
+  const freeMod1 = await prisma.module.create({
+    data: {
+      title: 'Getting Started with Python',
+      content: 'Introduction to Python programming language and setup.',
+      type: 'TEXT',
+      orderIndex: 1,
+      price: 0,
+      isFree: true,
+      isPublished: true,
+      courseId: freeCourse.id
+    }
+  });
+
+  const freeMod2 = await prisma.module.create({
+    data: {
+      title: 'Python Fundamentals',
+      content: 'Variables, data types, and basic operations in Python.',
+      type: 'VIDEO',
+      orderIndex: 2,
+      videoDuration: 1800,
+      price: 0,
+      isFree: true,
+      isPublished: true,
+      courseId: freeCourse.id
+    }
+  });
+
+  // Chapters for free course
+  const freeChapters = [
+    // Module 1 chapters
+    {
+      title: 'What is Python?',
+      description: 'Learn about Python programming language and its applications.',
+      content: '<h2>Welcome to Python!</h2><p>Python is a high-level, interpreted programming language known for its simplicity and readability. It was created by Guido van Rossum and first released in 1991.</p><h3>Why Learn Python?</h3><ul><li>Easy to learn and use</li><li>Versatile - used in web development, data science, AI, automation</li><li>Large community and extensive libraries</li><li>High demand in job market</li></ul>',
+      videoUrl: '',
+      duration: 300,
+      order: 1,
+      type: 'TEXT',
+      moduleId: freeMod1.id
+    },
+    {
+      title: 'Installing Python',
+      description: 'Step-by-step guide to install Python on your computer.',
+      content: '<h2>Installing Python</h2><p>Follow these steps to install Python on your system:</p><h3>Windows:</h3><ol><li>Go to python.org</li><li>Download Python 3.x</li><li>Run the installer</li><li>Check "Add Python to PATH"</li></ol><h3>Mac:</h3><ol><li>Install using Homebrew: brew install python</li><li>Or download from python.org</li></ol>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4',
+      duration: 900,
+      order: 2,
+      type: 'VIDEO',
+      moduleId: freeMod1.id
+    },
+    {
+      title: 'Your First Python Program',
+      description: 'Write and run your first Python program.',
+      content: '<h2>Hello, World!</h2><p>Let\'s write your first Python program:</p><pre><code>print("Hello, World!")</code></pre><p>This simple program demonstrates the basic syntax of Python. The print() function outputs text to the console.</p>',
+      videoUrl: '',
+      duration: 450,
+      order: 3,
+      type: 'TEXT',
+      moduleId: freeMod1.id
+    },
+    // Module 2 chapters
+    {
+      title: 'Variables and Data Types',
+      description: 'Understanding Python variables and basic data types.',
+      content: '<h2>Variables in Python</h2><p>Variables are containers for storing data values. In Python, you don\'t need to declare the type of variable.</p><pre><code># String\nname = "John"\n\n# Integer\nage = 25\n\n# Float\nheight = 5.9\n\n# Boolean\nis_student = True</code></pre>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_2mb.mp4',
+      duration: 1200,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: freeMod2.id
+    },
+    {
+      title: 'Working with Strings',
+      description: 'Learn string manipulation and formatting in Python.',
+      content: '<h2>String Operations</h2><p>Strings are sequences of characters. Python provides many built-in methods for string manipulation.</p><pre><code># String concatenation\nfirst_name = "John"\nlast_name = "Doe"\nfull_name = first_name + " " + last_name\n\n# String formatting\nprint(f"Hello, {full_name}!")</code></pre>',
+      videoUrl: '',
+      duration: 600,
+      order: 2,
+      type: 'TEXT',
+      moduleId: freeMod2.id
+    }
+  ];
+
+  for (const chapterData of freeChapters) {
+    await prisma.chapter.create({ data: chapterData });
+  }
+
+  // ===================================
+  // COURSE 2: MIXED PRICING COURSE
+  // ===================================
+  const mixedCourse = await prisma.course.create({
+    data: {
+      title: 'React Development Complete',
+      slug: 'react-development-complete',
+      description: 'Master React development with both free and premium content. Perfect for testing the learning interface.',
+      price: 99.99,
+      imageUrl: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=800&h=400&fit=crop',
+      categoryId: webDevCategory.id
+    }
+  });
+
+  // Mixed course modules
+  const mixedMod1 = await prisma.module.create({
+    data: {
+      title: 'React Introduction (Free)',
+      content: 'Free introduction to React concepts and philosophy.',
+      type: 'TEXT',
+      orderIndex: 1,
+      price: 0,
+      isFree: true,
+      isPublished: true,
+      courseId: mixedCourse.id
+    }
+  });
+
+  const mixedMod2 = await prisma.module.create({
+    data: {
+      title: 'React Setup & Environment (Paid)',
+      content: 'Professional React development environment setup.',
+      type: 'VIDEO',
+      orderIndex: 2,
+      videoDuration: 2400,
+      price: 29.99,
+      isFree: false,
+      isPublished: true,
+      courseId: mixedCourse.id
+    }
+  });
+
+  const mixedMod3 = await prisma.module.create({
+    data: {
+      title: 'Advanced React Patterns (Premium)',
+      content: 'Advanced React patterns for professional developers.',
+      type: 'VIDEO',
+      orderIndex: 3,
+      videoDuration: 3600,
+      price: 49.99,
+      isFree: false,
+      isPublished: true,
+      courseId: mixedCourse.id
+    }
+  });
+
+  // Chapters for mixed pricing course
+  const mixedChapters = [
+    // Free module chapters
+    {
+      title: 'What is React?',
+      description: 'Introduction to React library and its core concepts.',
+      content: '<h2>React Overview</h2><p>React is a JavaScript library for building user interfaces. It allows developers to create reusable UI components.</p><h3>Key Features:</h3><ul><li>Component-based architecture</li><li>Virtual DOM for performance</li><li>One-way data flow</li><li>Large ecosystem</li></ul>',
+      videoUrl: '',
+      duration: 600,
+      order: 1,
+      type: 'TEXT',
+      moduleId: mixedMod1.id
+    },
+    {
+      title: 'React vs Other Frameworks',
+      description: 'Compare React with other popular frameworks.',
+      content: '<h2>React vs Others</h2><p>Understanding how React compares to Vue, Angular, and other frameworks.</p><table><tr><th>Framework</th><th>Learning Curve</th><th>Performance</th></tr><tr><td>React</td><td>Medium</td><td>High</td></tr><tr><td>Vue</td><td>Easy</td><td>High</td></tr><tr><td>Angular</td><td>Hard</td><td>High</td></tr></table>',
+      videoUrl: '',
+      duration: 480,
+      order: 2,
+      type: 'TEXT',
+      moduleId: mixedMod1.id
+    },
+    // Paid module 2 chapters
+    {
+      title: 'Setting Up Create React App',
+      description: 'Learn how to set up a React project using Create React App.',
+      content: '<h2>Project Setup</h2><p>Create React App is the official way to bootstrap React applications.</p><pre><code>npx create-react-app my-app\ncd my-app\nnpm start</code></pre>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_5mb.mp4',
+      duration: 1200,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: mixedMod2.id
+    },
+    {
+      title: 'Development Tools Setup',
+      description: 'Configure VS Code and browser tools for React development.',
+      content: '<h2>Developer Tools</h2><p>Essential tools for React development:</p><ul><li>VS Code with React extensions</li><li>React Developer Tools browser extension</li><li>ESLint and Prettier for code quality</li></ul>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_3mb.mp4',
+      duration: 900,
+      order: 2,
+      type: 'VIDEO',
+      moduleId: mixedMod2.id
+    },
+    {
+      title: 'Understanding Project Structure',
+      description: 'Learn about the default Create React App project structure.',
+      content: '<h2>Project Structure</h2><p>Understanding the files and folders in a React project.</p><pre><code>my-app/\n├── public/\n├── src/\n│   ├── App.js\n│   ├── index.js\n│   └── ...\n├── package.json\n└── README.md</code></pre>',
+      videoUrl: '',
+      duration: 600,
+      order: 3,
+      type: 'TEXT',
+      moduleId: mixedMod2.id
+    },
+    // Premium module chapters
+    {
+      title: 'React Context API',
+      description: 'Master state management with React Context.',
+      content: '<h2>Context API</h2><p>The Context API provides a way to pass data through the component tree without having to pass props down manually at every level.</p>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_7mb.mp4',
+      duration: 1800,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: mixedMod3.id
+    },
+    {
+      title: 'Custom Hooks Pattern',
+      description: 'Build reusable logic with custom React hooks.',
+      content: '<h2>Custom Hooks</h2><p>Custom hooks allow you to extract component logic into reusable functions.</p><pre><code>function useCounter(initialValue = 0) {\n  const [count, setCount] = useState(initialValue);\n  \n  const increment = () => setCount(count + 1);\n  const decrement = () => setCount(count - 1);\n  \n  return { count, increment, decrement };\n}</code></pre>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_4mb.mp4',
+      duration: 2100,
+      order: 2,
+      type: 'VIDEO',
+      moduleId: mixedMod3.id
+    },
+    {
+      title: 'Performance Optimization',
+      description: 'Optimize React applications for production.',
+      content: '<h2>Performance Tips</h2><p>Techniques to optimize React applications:</p><ul><li>React.memo for component memoization</li><li>useMemo and useCallback hooks</li><li>Code splitting with lazy loading</li><li>Bundle analysis and optimization</li></ul>',
+      videoUrl: '',
+      duration: 900,
+      order: 3,
+      type: 'TEXT',
+      moduleId: mixedMod3.id
+    }
+  ];
+
+  for (const chapterData of mixedChapters) {
+    await prisma.chapter.create({ data: chapterData });
+  }
+
+  // ===================================
+  // COURSE 3: PREMIUM COURSE
+  // ===================================
+  const premiumCourse = await prisma.course.create({
+    data: {
+      title: 'Full Stack Developer Pro',
+      slug: 'fullstack-developer-pro',
+      description: 'Professional full-stack development course with advanced topics and real-world projects.',
+      price: 299.99,
+      imageUrl: 'https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=800&h=400&fit=crop',
+      categoryId: webDevCategory.id
+    }
+  });
+
+  // Premium course modules
+  const premiumMod1 = await prisma.module.create({
+    data: {
+      title: 'Course Overview (Free Preview)',
+      content: 'Free preview of what you\'ll learn in this comprehensive course.',
+      type: 'VIDEO',
+      orderIndex: 1,
+      videoDuration: 600,
+      price: 0,
+      isFree: true,
+      isPublished: true,
+      courseId: premiumCourse.id
+    }
+  });
+
+  const premiumMod2 = await prisma.module.create({
+    data: {
+      title: 'Advanced Frontend Architecture',
+      content: 'Professional frontend development patterns and architecture.',
+      type: 'VIDEO',
+      orderIndex: 2,
+      videoDuration: 4800,
+      price: 89.99,
+      isFree: false,
+      isPublished: true,
+      courseId: premiumCourse.id
+    }
+  });
+
+  const premiumMod3 = await prisma.module.create({
+    data: {
+      title: 'Microservices & API Design',
+      content: 'Building scalable backend systems with microservices.',
+      type: 'VIDEO',
+      orderIndex: 3,
+      videoDuration: 5400,
+      price: 119.99,
+      isFree: false,
+      isPublished: true,
+      courseId: premiumCourse.id
+    }
+  });
+
+  // Premium course chapters
+  const premiumChapters = [
+    // Preview module
+    {
+      title: 'Course Introduction',
+      description: 'Overview of the complete full-stack development curriculum.',
+      content: '<h2>Welcome to Full Stack Pro!</h2><p>This comprehensive course will teach you everything you need to become a professional full-stack developer.</p><h3>What You\'ll Learn:</h3><ul><li>Advanced React patterns and state management</li><li>Node.js and microservices architecture</li><li>Database design and optimization</li><li>DevOps and deployment strategies</li><li>Real-world project development</li></ul>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4',
+      duration: 600,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: premiumMod1.id
+    },
+    // Frontend module
+    {
+      title: 'State Management Architecture',
+      description: 'Advanced patterns for managing application state.',
+      content: '<h2>State Management</h2><p>Learn advanced state management patterns including Redux, Zustand, and Context patterns.</p>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_8mb.mp4',
+      duration: 2400,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: premiumMod2.id
+    },
+    {
+      title: 'Component Design Systems',
+      description: 'Building scalable and maintainable component libraries.',
+      content: '<h2>Design Systems</h2><p>Create reusable component libraries with consistent design and behavior.</p>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_6mb.mp4',
+      duration: 1800,
+      order: 2,
+      type: 'VIDEO',
+      moduleId: premiumMod2.id
+    },
+    // Backend module
+    {
+      title: 'Microservices Fundamentals',
+      description: 'Introduction to microservices architecture and best practices.',
+      content: '<h2>Microservices</h2><p>Learn how to design and implement scalable microservices architecture.</p>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_10mb.mp4',
+      duration: 2700,
+      order: 1,
+      type: 'VIDEO',
+      moduleId: premiumMod3.id
+    },
+    {
+      title: 'API Gateway & Authentication',
+      description: 'Implementing secure API gateways and authentication systems.',
+      content: '<h2>API Security</h2><p>Build secure APIs with proper authentication and authorization.</p>',
+      videoUrl: 'https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_9mb.mp4',
+      duration: 2100,
+      order: 2,
+      type: 'VIDEO',
+      moduleId: premiumMod3.id
+    }
+  ];
+
+  for (const chapterData of premiumChapters) {
+    await prisma.chapter.create({ data: chapterData });
+  }
+
+  console.log('✅ Courses, modules, and chapters created');
+
+  // ===================================
+  // CREATE SAMPLE PROGRESS DATA
+  // ===================================
+  console.log('📊 Creating sample progress data...');
+
+  // Get all chapters for progress creation
+  const allChapters = await prisma.chapter.findMany({
+    include: { module: true }
+  });
+
+  // Create progress for regular user on free course (partially completed)
+  const freeChapters = allChapters.filter(ch => ch.module.courseId === freeCourse.id);
+  for (let i = 0; i < freeChapters.length; i++) {
+    const chapter = freeChapters[i];
+    let progress;
+    
+    if (i === 0) {
+      // First chapter: completed
+      progress = { isCompleted: true, watchTime: chapter.duration, completionPercentage: 100 };
+    } else if (i === 1) {
+      // Second chapter: in progress
+      progress = { isCompleted: false, watchTime: Math.floor(chapter.duration * 0.6), completionPercentage: 60 };
+    } else if (i === 2) {
+      // Third chapter: started
+      progress = { isCompleted: false, watchTime: Math.floor(chapter.duration * 0.2), completionPercentage: 20 };
+    } else {
+      // Remaining chapters: not started
+      progress = { isCompleted: false, watchTime: 0, completionPercentage: 0 };
+    }
+
+    await prisma.chapterProgress.create({
+      data: {
+        userId: regularUser.id,
+        chapterId: chapter.id,
+        ...progress
+      }
+    });
+  }
+
+  // Create progress for test user on mixed course (some completed)
+  const mixedChaptersForProgress = allChapters.filter(ch => ch.module.courseId === mixedCourse.id);
+  for (let i = 0; i < Math.min(3, mixedChaptersForProgress.length); i++) {
+    const chapter = mixedChaptersForProgress[i];
+    await prisma.chapterProgress.create({
+      data: {
+        userId: testUser.id,
+        chapterId: chapter.id,
+        isCompleted: i < 2,
+        watchTime: i < 2 ? chapter.duration : Math.floor(chapter.duration * 0.4),
+        completionPercentage: i < 2 ? 100 : 40
+      }
+    });
+  }
+
+  console.log('✅ Sample progress data created');
+
+  // ===================================
+  // CREATE MODULE OWNERSHIP DATA
+  // ===================================
+  console.log('💰 Creating module ownership data...');
+
+  // Regular user owns free modules from mixed course
+  await prisma.moduleOwnership.create({
+    data: {
+      userId: regularUser.id,
+      moduleId: mixedMod1.id,
+      purchasedAt: new Date(),
+      price: 0
+    }
+  });
+
+  // Test user owns first paid module from mixed course
+  await prisma.moduleOwnership.create({
+    data: {
+      userId: testUser.id,
+      moduleId: mixedMod1.id,
+      purchasedAt: new Date(),
+      price: 0
+    }
+  });
+
+  await prisma.moduleOwnership.create({
+    data: {
+      userId: testUser.id,
+      moduleId: mixedMod2.id,
+      purchasedAt: new Date(),
+      price: 29.99
+    }
+  });
+
+  console.log('✅ Module ownership data created');
+
+  // ===================================
+  // CREATE ENROLLMENTS
+  // ===================================
+  console.log('📚 Creating course enrollments...');
+
+  // Enroll users in courses
+  await prisma.enrollment.create({
+    data: {
+      userId: regularUser.id,
+      courseId: freeCourse.id,
+      progress: 60.0,
+      lastAccessed: new Date()
+    }
+  });
+
+  await prisma.enrollment.create({
+    data: {
+      userId: testUser.id,
+      courseId: mixedCourse.id,
+      progress: 25.0,
+      lastAccessed: new Date()
+    }
+  });
+
+  await prisma.enrollment.create({
+    data: {
+      userId: regularUser.id,
+      courseId: mixedCourse.id,
+      progress: 10.0,
+      lastAccessed: new Date(Date.now() - 24 * 60 * 60 * 1000) // Yesterday
+    }
+  });
+
+  console.log('✅ Course enrollments created');
+
+  console.log('🎉 Database seeding completed successfully!');
+  console.log('\n📊 Test Data Summary:');
+  console.log('======================================');
+  console.log('👥 Users:');
+  console.log('  - admin@example.com / admin123 (Admin)');
+  console.log('  - user@example.com / user123 (Regular user with progress)');
+  console.log('  - test@example.com / test123 (Test user with purchases)');
+  
+  console.log('\n📚 Courses Created:');
+  console.log(`  1. "${freeCourse.title}" (ID: ${freeCourse.id}) - FREE`);
+  console.log('     - 2 modules, 5 chapters total');
+  console.log('     - All content free and accessible');
+  console.log('     - Sample progress data for user@example.com');
+  
+  console.log(`  2. "${mixedCourse.title}" (ID: ${mixedCourse.id}) - MIXED`);
+  console.log('     - 3 modules (1 free, 2 paid), 7 chapters total');
+  console.log('     - Tests free vs paid content access');
+  console.log('     - Sample progress and ownership data');
+  
+  console.log(`  3. "${premiumCourse.title}" (ID: ${premiumCourse.id}) - PREMIUM`);
+  console.log('     - 3 modules (1 preview, 2 premium), 5 chapters total');
+  console.log('     - Advanced content with higher pricing');
+
+  console.log('\n🧪 Perfect for Testing:');
+  console.log('======================================');
+  console.log('✅ Learning Interface Navigation');
+  console.log('  - Try: http://localhost:3000/courses/1/learn');
+  console.log('  - Try: http://localhost:3000/courses/2/learn');
+  
+  console.log('✅ Progress Tracking');
+  console.log('  - Video chapters with different completion levels');
+  console.log('  - Text chapters with various progress states');
+  
+  console.log('✅ Payment System');
+  console.log('  - Free modules (accessible)');
+  console.log('  - Paid modules (purchase required)');
+  console.log('  - Mixed access scenarios');
+  
+  console.log('✅ Content Types');
+  console.log('  - Text chapters with rich HTML content');
+  console.log('  - Video chapters with sample video URLs');
+  
+  console.log('✅ Responsive Design');
+  console.log('  - Test on desktop and mobile');
+  console.log('  - Sidebar navigation and mobile menu');
+
+  console.log('\n🎯 Test Scenarios:');
+  console.log('======================================');
+  console.log('1. Login as user@example.com → Check free course progress');
+  console.log('2. Login as test@example.com → Check mixed course with purchases');
+  console.log('3. Test chapter navigation and content display');
+  console.log('4. Test video player controls and progress tracking');
+  console.log('5. Test module purchase flow');
+  console.log('6. Test responsive design on mobile');
+
+  console.log('\n🚀 Ready to test the complete learning interface!');
+}
+
+main()
+  .catch((e) => {
+    console.error('❌ Seeding failed:', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

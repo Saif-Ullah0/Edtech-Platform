@@ -87,6 +87,8 @@ model Course {
   categoryId Int
   category   Category @relation(fields: [categoryId], references: [id])
   notes       Note[]
+  videos      Video[]  // ADD THIS LINE
+
   courseBundleItems CourseBundleItem[]
 
   modules     Module[]
@@ -116,6 +118,8 @@ model Module {
   publishStatus String   @default("DRAFT") // "DRAFT" or "PUBLISHED"
   
   notes       Note[]
+  videos      Video[]  // ADD THIS LINE
+
 
   courseId    Int
   course      Course @relation(fields: [courseId], references: [id])
@@ -152,6 +156,10 @@ model Chapter {
   moduleId    Int
   module      Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   
+  // 🆕 NEW: Notes relation
+  notes       Note[]
+  videos      Video[]  // ADD THIS LINE
+
   // 🆕 NEW: Chapter progress tracking
   chapterProgress ChapterProgress[]
   
@@ -314,12 +322,61 @@ model Note {
   moduleId    Int?
   module      Module?  @relation(fields: [moduleId], references: [id])
   
+  // 🆕 NEW: Chapter support
+  chapterId   String?
+  chapter     Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  
   // Timestamps
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   isDeleted   Boolean  @default(false)
   
   @@map("notes")
+}
+
+model Video {
+  id            Int      @id @default(autoincrement())
+  title         String
+  slug          String   @unique
+  description   String?
+  
+  // Video file information
+  videoUrl      String?   // Path to video file
+  thumbnailUrl  String?   // Path to thumbnail image
+  fileName      String?   // Original filename
+  fileSize      String?   // File size in bytes
+  fileType      String?   // Video format (mp4, avi, etc.)
+  
+  // Video metadata
+  duration      Int?      // Duration in seconds
+  quality       String?   // HD, 4K, etc.
+  resolution    String?   // 1920x1080, etc.
+  
+  // Management fields
+  uploadStatus  String    @default("PENDING") // "PENDING", "PROCESSING", "COMPLETED", "FAILED"
+  isPublished   Boolean   @default(false)
+  orderIndex    Int       @default(0)
+  
+  // Analytics
+  viewCount     Int       @default(0)
+  downloadCount Int       @default(0)
+  
+  // Hierarchical relationships (same as Notes)
+  courseId      Int
+  course        Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  moduleId      Int?
+  module        Module?   @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  
+  chapterId     String?
+  chapter       Chapter?  @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  isDeleted     Boolean   @default(false)
+  
+  @@map("videos")
 }
 
 model Enrollment {
