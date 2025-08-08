@@ -1,4 +1,4 @@
-// src/controllers/notesController.js
+// src/controllers/notesController.js - Fixed for String chapterId
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
@@ -12,10 +12,28 @@ const deleteFile = (filePath) => {
   }
 };
 
-// Create note with file upload
+// UPDATED: Create note with file upload (now supports chapters)
 const createNote = async (req, res) => {
   try {
-    const { title, description, content, courseId, moduleId, orderIndex } = req.body;
+    const { title, description, content, courseId, moduleId, chapterId, orderIndex, isPublished } = req.body;
+    
+    // Validate chapter belongs to module if both are provided
+    if (chapterId && moduleId) {
+      const chapter = await prisma.chapter.findUnique({
+        where: { id: chapterId }, // No parseInt - it's already a string
+        include: { module: true }
+      });
+      
+      if (!chapter) {
+        if (req.file) deleteFile(req.file.path);
+        return res.status(400).json({ error: 'Chapter not found' });
+      }
+      
+      if (chapter.moduleId !== parseInt(moduleId)) {
+        if (req.file) deleteFile(req.file.path);
+        return res.status(400).json({ error: 'Chapter does not belong to the specified module' });
+      }
+    }
     
     // Generate slug from title
     const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
@@ -27,12 +45,18 @@ const createNote = async (req, res) => {
       description: description || '',
       content: content || '',
       courseId: parseInt(courseId),
-      orderIndex: parseInt(orderIndex) || 0
+      orderIndex: parseInt(orderIndex) || 0,
+      isPublished: isPublished === 'true' || isPublished === true
     };
     
     // Add module if provided
     if (moduleId) {
       noteData.moduleId = parseInt(moduleId);
+    }
+    
+    // Add chapter if provided (NO parseInt - it's a string)
+    if (chapterId) {
+      noteData.chapterId = chapterId;
     }
     
     // Handle file upload
@@ -47,7 +71,8 @@ const createNote = async (req, res) => {
       data: noteData,
       include: {
         course: { select: { title: true } },
-        module: { select: { title: true } }
+        module: { select: { title: true } },
+        chapter: { select: { title: true } }
       }
     });
     
@@ -67,14 +92,17 @@ const createNote = async (req, res) => {
   }
 };
 
-// Get all notes
+// UPDATED: Get all notes (now includes chapter)
 const getAllNotes = async (req, res) => {
   try {
+    console.log('🔍 Fetching all notes for admin...');
+    
     const notes = await prisma.note.findMany({
       where: { isDeleted: false },
       include: {
         course: { select: { title: true } },
-        module: { select: { title: true } }
+        module: { select: { title: true } },
+        chapter: { select: { title: true } } // This should work now
       },
       orderBy: [
         { courseId: 'asc' },
@@ -83,6 +111,7 @@ const getAllNotes = async (req, res) => {
       ]
     });
     
+    console.log('✅ Found notes:', notes.length);
     res.json(notes);
   } catch (error) {
     console.error('Get notes error:', error);
@@ -102,7 +131,8 @@ const getNotesByCourse = async (req, res) => {
         isPublished: true
       },
       include: {
-        module: { select: { title: true } }
+        module: { select: { title: true } },
+        chapter: { select: { title: true } }
       },
       orderBy: [
         { orderIndex: 'asc' },
@@ -128,6 +158,9 @@ const getNotesByModule = async (req, res) => {
         isDeleted: false,
         isPublished: true
       },
+      include: {
+        chapter: { select: { title: true } }
+      },
       orderBy: [
         { orderIndex: 'asc' },
         { createdAt: 'desc' }
@@ -141,11 +174,11 @@ const getNotesByModule = async (req, res) => {
   }
 };
 
-// Update note
+// UPDATED: Update note (handles string chapterId)
 const updateNote = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, content, courseId, moduleId, orderIndex, isPublished } = req.body;
+    const { title, description, content, courseId, moduleId, chapterId, orderIndex, isPublished } = req.body;
     
     // Get existing note
     const existingNote = await prisma.note.findUnique({
@@ -159,6 +192,24 @@ const updateNote = async (req, res) => {
       return res.status(404).json({ error: 'Note not found' });
     }
     
+    // Validate chapter belongs to module if both are provided
+    if (chapterId && moduleId) {
+      const chapter = await prisma.chapter.findUnique({
+        where: { id: chapterId }, // No parseInt - it's a string
+        include: { module: true }
+      });
+      
+      if (!chapter) {
+        if (req.file) deleteFile(req.file.path);
+        return res.status(400).json({ error: 'Chapter not found' });
+      }
+      
+      if (chapter.moduleId !== parseInt(moduleId)) {
+        if (req.file) deleteFile(req.file.path);
+        return res.status(400).json({ error: 'Chapter does not belong to the specified module' });
+      }
+    }
+    
     // Prepare update data
     const updateData = {
       title,
@@ -166,14 +217,21 @@ const updateNote = async (req, res) => {
       content: content || '',
       courseId: parseInt(courseId),
       orderIndex: parseInt(orderIndex) || 0,
-      isPublished: isPublished === 'true'
+      isPublished: isPublished === 'true' || isPublished === true
     };
     
-    // Add module if provided
+    // Handle moduleId (can be set to null)
     if (moduleId) {
       updateData.moduleId = parseInt(moduleId);
     } else {
       updateData.moduleId = null;
+    }
+    
+    // Handle chapterId (can be set to null) - NO parseInt
+    if (chapterId) {
+      updateData.chapterId = chapterId;
+    } else {
+      updateData.chapterId = null;
     }
     
     // Handle new file upload
@@ -197,7 +255,8 @@ const updateNote = async (req, res) => {
       data: updateData,
       include: {
         course: { select: { title: true } },
-        module: { select: { title: true } }
+        module: { select: { title: true } },
+        chapter: { select: { title: true } }
       }
     });
     
@@ -217,7 +276,7 @@ const updateNote = async (req, res) => {
   }
 };
 
-// Delete note
+// Delete note (no changes needed)
 const deleteNote = async (req, res) => {
   try {
     const { id } = req.params;
@@ -253,7 +312,7 @@ const deleteNote = async (req, res) => {
   }
 };
 
-// Download note file
+// Download and view functions remain the same
 const downloadNote = async (req, res) => {
   try {
     const { filename } = req.params;
@@ -298,7 +357,6 @@ const downloadNote = async (req, res) => {
   }
 };
 
-// View note file (for PDFs in browser)
 const viewNote = async (req, res) => {
   try {
     const { filename } = req.params;
@@ -325,6 +383,7 @@ const viewNote = async (req, res) => {
     res.status(500).json({ error: 'Failed to view file' });
   }
 };
+
 
 module.exports = {
   createNote,

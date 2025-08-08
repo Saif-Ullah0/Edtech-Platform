@@ -1,4 +1,6 @@
 const moduleService = require('../services/moduleService');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 const getModules = async (req, res) => {
   const { courseId } = req.query;
@@ -27,21 +29,56 @@ const getModules = async (req, res) => {
   }
 };
 
+// In your moduleController.js, update getModuleById to show detailed errors:
+
 const getModuleById = async (req, res) => {
   try {
     console.log('🔍 BACKEND Modules: Fetching module by ID:', req.params.id);
+    console.log('🔍 BACKEND Modules: ID type:', typeof req.params.id);
     
-    const module = await moduleService.getModuleById(Number(req.params.id));
+    const module = await prisma.module.findUnique({
+      where: { id: Number(req.params.id) },
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true
+          }
+        },
+        chapters: {
+          select: {
+            id: true,
+            title: true,
+            order: true,
+            publishStatus: true
+          },
+          orderBy: {
+            order: 'asc'
+          }
+        },
+        _count: {
+          select: {
+            chapters: true
+          }
+        }
+      }
+    });
+    
+    console.log('🔍 BACKEND Modules: Raw module data:', JSON.stringify(module, null, 2));
+    
     if (!module) {
       console.log('❌ BACKEND Modules: Module not found:', req.params.id);
       return res.status(404).json({ error: 'Module not found' });
     }
     
     console.log('✅ BACKEND Modules: Module found:', module.title);
+    console.log('✅ BACKEND Modules: Chapters found:', module.chapters?.length || 0);
     res.status(200).json(module);
   } catch (error) {
-    console.error('❌ BACKEND Modules: Error fetching module:', error);
-    res.status(500).json({ error: 'Failed to fetch module' });
+    console.error('❌ BACKEND Modules: Detailed error:', error);
+    console.error('❌ BACKEND Modules: Error stack:', error.stack);
+    console.error('❌ BACKEND Modules: Error message:', error.message);
+    res.status(500).json({ error: 'Failed to fetch module', details: error.message });
   }
 };
 
