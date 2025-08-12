@@ -33,6 +33,9 @@ const chapterAdminRoutes = require('./routes/admin/chapterAdminRoutes');
 const bundleRoutes = require('./routes/bundleRoutes');
 const bundleAdminRoutes = require('./routes/admin/bundleAdminRoutes');
 
+const commentRoutes = require('./routes/commentRoutes');
+const discountRoutes = require('./routes/discountRoutes');
+
 const startOrderCleanupJob = require('./cron/orderCleanupJob');
 startOrderCleanupJob();
 
@@ -85,6 +88,9 @@ app.use('/api/progress', progressRoutes);
 
 app.use('/api/notes', notesRoutes);
 
+app.use('/api/comments', commentRoutes);
+app.use('/api/discounts', discountRoutes);
+
 // Admin routes (require authentication + admin role)
 app.use('/api/admin/categories', requireAuth, requireAdmin, adminCategoryRoutes);
 app.use('/api/admin/courses', requireAuth, requireAdmin, adminCourseRoutes);
@@ -98,6 +104,7 @@ app.use('/api/admin/chapters', chapterAdminRoutes);
 
 app.use('/api/bundles', bundleRoutes);
 app.use('/api/admin/bundles', bundleAdminRoutes);
+app.use('/api/admin/bundles', requireAuth, requireAdmin, bundleAdminRoutes);
 
 app.get('/api/me', requireAuth, (req, res) => {
   try {
