@@ -1,0 +1,156 @@
+# Create this file as: backend/test-api.http
+# Use REST Client extension in VS Code
+
+### Variables - UPDATE THESE WITH YOUR ACTUAL VALUES
+@baseUrl = http://localhost:5000/api
+@authToken = YOUR_JWT_TOKEN_HERE
+@adminToken = YOUR_ADMIN_JWT_TOKEN_HERE
+
+### 1. Test Server is Running
+GET {{baseUrl}}/
+
+### 2. Get comments for a note (should work without auth)
+GET {{baseUrl}}/comments/note/1
+
+### 3. Get comments for a video (should work without auth)  
+GET {{baseUrl}}/comments/video/1
+
+### 4. Create a comment on a note (requires auth)
+POST {{baseUrl}}/comments
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "content": "This is my first test comment on a note!",
+  "resourceType": "note",
+  "resourceId": 1
+}
+
+### 5. Create a comment on a video (requires auth)
+POST {{baseUrl}}/comments
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "content": "Great video! Thanks for sharing.",
+  "resourceType": "video", 
+  "resourceId": 1
+}
+
+### 6. Create a reply to comment #1 (requires auth)
+POST {{baseUrl}}/comments
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "content": "I totally agree with your comment!",
+  "resourceType": "note",
+  "resourceId": 1,
+  "parentId": 1
+}
+
+### 7. Like a comment (requires auth)
+POST {{baseUrl}}/comments/1/react
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "type": "LIKE"
+}
+
+### 8. Dislike a comment (requires auth)
+POST {{baseUrl}}/comments/1/react
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "type": "DISLIKE"
+}
+
+### 9. Update your own comment (requires auth)
+PUT {{baseUrl}}/comments/1
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "content": "Updated: This is my edited comment!"
+}
+
+### 10. Delete your own comment (requires auth)
+DELETE {{baseUrl}}/comments/1
+Authorization: Bearer {{authToken}}
+
+### 11. Create discount code (admin only)
+POST {{baseUrl}}/discounts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "code": "WELCOME20",
+  "name": "Welcome 20% Off",
+  "type": "PERCENTAGE",
+  "value": 20,
+  "maxUses": 100,
+  "minPurchaseAmount": 50
+}
+
+### 12. Create fixed amount discount (admin only)
+POST {{baseUrl}}/discounts
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "code": "SAVE10",
+  "name": "Save $10",
+  "type": "FIXED_AMOUNT",
+  "value": 10,
+  "maxUses": 50
+}
+
+### 13. Validate discount code (user)
+POST {{baseUrl}}/discounts/validate
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "code": "WELCOME20",
+  "purchaseAmount": 100
+}
+
+### 14. Apply discount code (user)
+POST {{baseUrl}}/discounts/apply
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "code": "WELCOME20",
+  "originalAmount": 100,
+  "discountAmount": 20,
+  "finalAmount": 80,
+  "bundleId": 1
+}
+
+### 15. Get all discount codes (admin only)
+GET {{baseUrl}}/discounts
+Authorization: Bearer {{adminToken}}
+
+### 16. Test error cases - Invalid discount
+POST {{baseUrl}}/discounts/validate
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "code": "INVALID",
+  "purchaseAmount": 100
+}
+
+### 17. Test error cases - Empty comment
+POST {{baseUrl}}/comments
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "content": "",
+  "resourceType": "note",
+  "resourceId": 1
+}

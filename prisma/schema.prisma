@@ -33,6 +33,125 @@ enum ChapterType {
   QUIZ
 }
 
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model Comment {
+  id        Int       @id @default(autoincrement())
+  content   String    @db.Text
+  userId    Int
+  
+  // Resource relationships
+  noteId    Int?
+  videoId   Int?
+  
+  // Nested comments
+  parentId  Int?
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  
+  // Status
+  isDeleted Boolean   @default(false)
+  isEdited  Boolean   @default(false)
+  
+  // Analytics
+  likesCount    Int @default(0)
+  dislikesCount Int @default(0)
+  repliesCount  Int @default(0)
+  
+  // Relations
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      Note?              @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  video     Video?             @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  reactions CommentReaction[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([noteId, createdAt])
+  @@index([videoId, createdAt])
+  @@index([parentId])
+  @@map("comments")
+}
+
+model CommentReaction {
+  id        Int           @id @default(autoincrement())
+  type      ReactionType
+  userId    Int
+  commentId Int
+  
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, commentId])
+  @@map("comment_reactions")
+}
+
+model DiscountCode {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique
+  name        String?
+  description String?
+  
+  type        DiscountType @default(PERCENTAGE)
+  value       Float
+  
+  maxUses        Int?     
+  usedCount      Int      @default(0)
+  maxUsesPerUser Int?     @default(1)
+  
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  
+  minPurchaseAmount Float? @default(0)
+  maxDiscountAmount Float?
+  
+  applicableToType String @default("ALL")
+  
+  isActive    Boolean @default(true)
+  isPublic    Boolean @default(false)
+  
+  usages      DiscountUsage[]
+  
+  createdBy   Int?
+  creator     User?   @relation("DiscountCreator", fields: [createdBy], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("discount_codes")
+}
+
+model DiscountUsage {
+  id             Int      @id @default(autoincrement())
+  discountCodeId Int
+  userId         Int
+  orderId        Int?
+  bundleId       Int?
+  
+  originalAmount Float
+  discountAmount Float
+  finalAmount    Float
+  
+  discountCode   DiscountCode @relation(fields: [discountCodeId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+  
+  createdAt      DateTime @default(now())
+  
+  @@index([discountCodeId, userId])
+  @@map("discount_usages")
+}
+
+
 model User {
   id        Int          @id @default(autoincrement())
   name      String
@@ -46,7 +165,10 @@ model User {
   courses   Enrollment[] 
   orders    Order[]      
   createdAt DateTime     @default(now())
-  
+  comments          Comment[]
+  commentReactions  CommentReaction[]
+  discountUsages    DiscountUsage[]
+  createdDiscounts  DiscountCode[]  @relation("DiscountCreator")
   // Module-wise payment relations
   moduleEnrollments ModuleEnrollment[]
   bundles           Bundle[]
@@ -321,7 +443,8 @@ model Note {
   course      Course   @relation(fields: [courseId], references: [id])
   moduleId    Int?
   module      Module?  @relation(fields: [moduleId], references: [id])
-  
+  comments          Comment[]
+
   // 🆕 NEW: Chapter support
   chapterId   String?
   chapter     Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
@@ -339,7 +462,8 @@ model Video {
   title         String
   slug          String   @unique
   description   String?
-  
+  comments          Comment[]
+
   // Video file information
   videoUrl      String?   // Path to video file
   thumbnailUrl  String?   // Path to thumbnail image
