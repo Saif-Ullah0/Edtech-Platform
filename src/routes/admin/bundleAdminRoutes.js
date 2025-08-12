@@ -1,61 +1,47 @@
-
+// 4. FIXED BACKEND: admin/bundleAdminRoutes.js - Admin Routes
 // ================================
-// backend/src/routes/admin/bundleAdminRoutes.js - CREATE THIS FILE
-// ================================
-// First create the admin directory: mkdir backend/src/routes/admin
 
 const express = require('express');
 const router = express.Router();
 const requireAuth = require('../../middlewares/requireAuth');
 const requireAdmin = require('../../middlewares/requireAdmin');
+const { getBundleAnalytics } = require('../../controllers/bundleController');
 const { PrismaClient } = require('@prisma/client');
-
 const prisma = new PrismaClient();
 
-// ================================
-// ADMIN BUNDLE MANAGEMENT
-// ================================
+// Debug middleware
+router.use((req, res, next) => {
+  console.log(`🔍 ADMIN BUNDLE ROUTE: ${req.method} ${req.originalUrl}`);
+  next();
+});
 
-// Get all bundles (admin view with detailed info)
-const getAllBundlesAdmin = async (req, res) => {
+// ===== ADMIN ANALYTICS =====
+router.get('/analytics', requireAuth, requireAdmin, getBundleAnalytics);
+
+// ===== ADMIN BUNDLE MANAGEMENT =====
+router.get('/', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      type, 
-      status = 'all' // 'all', 'active', 'inactive', 'featured', 'popular'
-    } = req.query;
-
+    const { page = 1, limit = 20, type, status } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
-    const whereClause = {
-      ...(type && type !== 'all' && { type: type.toUpperCase() }),
-      ...(status === 'active' && { isActive: true }),
-      ...(status === 'inactive' && { isActive: false }),
-      ...(status === 'featured' && { isFeatured: true }),
-      ...(status === 'popular' && { isPopular: true })
-    };
+    let whereClause = {};
+    if (type && type !== 'all') whereClause.type = type.toUpperCase();
+    if (status === 'active') whereClause.isActive = true;
+    if (status === 'inactive') whereClause.isActive = false;
+    if (status === 'featured') whereClause.isFeatured = true;
+    if (status === 'popular') whereClause.isPopular = true;
 
     const [bundles, totalCount] = await Promise.all([
       prisma.bundle.findMany({
         where: whereClause,
         include: {
-          user: { select: { id: true, name: true, email: true } },
-          moduleItems: {
-            include: {
-              module: {
-                include: { course: { select: { id: true, title: true } } }
-              }
-            }
-          },
+          user: { select: { id: true, name: true, email: true, role: true } },
           courseItems: {
             include: {
               course: { select: { id: true, title: true, price: true } }
             }
           },
-          _count: {
-            select: { purchases: true }
-          }
+          _count: { select: { purchases: true } }
         },
         orderBy: [
           { isFeatured: 'desc' },
@@ -68,30 +54,9 @@ const getAllBundlesAdmin = async (req, res) => {
       prisma.bundle.count({ where: whereClause })
     ]);
 
-    const enhancedBundles = bundles.map(bundle => {
-      let individualTotal = 0;
-      
-      if (bundle.type === 'MODULE') {
-        individualTotal = bundle.moduleItems.reduce((sum, item) => sum + item.module.price, 0);
-      } else if (bundle.type === 'COURSE') {
-        individualTotal = bundle.courseItems.reduce((sum, item) => sum + item.course.price, 0);
-      }
-      
-      const savings = individualTotal - bundle.finalPrice;
-      const savingsPercentage = individualTotal > 0 ? ((savings / individualTotal) * 100) : 0;
-
-      return {
-        ...bundle,
-        individualTotal,
-        savings,
-        savingsPercentage: Math.round(savingsPercentage),
-        purchaseCount: bundle._count.purchases
-      };
-    });
-
     res.json({
       success: true,
-      bundles: enhancedBundles,
+      bundles,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -101,154 +66,71 @@ const getAllBundlesAdmin = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Admin: Error fetching bundles:', error);
+    console.error('❌ Admin get bundles error:', error);
     res.status(500).json({ error: 'Failed to fetch bundles' });
   }
-};
+});
 
-// Toggle bundle featured status
-const toggleBundleFeatured = async (req, res) => {
+// Toggle Featured Status
+router.put('/:bundleId/featured', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { bundleId } = req.params;
-    const { isFeatured, featuredOrder, promotedUntil } = req.body;
+    const { isFeatured } = req.body;
 
-    const updatedBundle = await prisma.bundle.update({
+    const bundle = await prisma.bundle.update({
       where: { id: parseInt(bundleId) },
-      data: {
-        isFeatured: !!isFeatured,
-        featuredOrder: isFeatured ? featuredOrder : null,
-        promotedUntil: promotedUntil ? new Date(promotedUntil) : null
-      }
+      data: { isFeatured: Boolean(isFeatured) }
     });
 
     res.json({
       success: true,
       message: `Bundle ${isFeatured ? 'featured' : 'unfeatured'} successfully`,
-      bundle: updatedBundle
+      bundle
     });
 
   } catch (error) {
-    console.error('Admin: Error toggling featured status:', error);
+    console.error('❌ Toggle featured error:', error);
     res.status(500).json({ error: 'Failed to update featured status' });
   }
-};
+});
 
-// Update bundle status (active/inactive)
-const updateBundleStatus = async (req, res) => {
+// Toggle Active Status
+router.put('/:bundleId/status', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { bundleId } = req.params;
     const { isActive } = req.body;
 
-    const updatedBundle = await prisma.bundle.update({
+    const bundle = await prisma.bundle.update({
       where: { id: parseInt(bundleId) },
-      data: { isActive: !!isActive }
+      data: { isActive: Boolean(isActive) }
     });
 
     res.json({
       success: true,
       message: `Bundle ${isActive ? 'activated' : 'deactivated'} successfully`,
-      bundle: updatedBundle
+      bundle
     });
 
   } catch (error) {
-    console.error('Admin: Error updating bundle status:', error);
-    res.status(500).json({ error: 'Failed to update bundle status' });
+    console.error('❌ Toggle status error:', error);
+    res.status(500).json({ error: 'Failed to update status' });
   }
-};
+});
 
-// Get bundle analytics dashboard
-const getBundleAnalyticsDashboard = async (req, res) => {
+// Update Popular Bundles
+router.post('/update-popular', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const [
-      totalBundles,
-      activeBundles,
-      featuredBundles,
-      popularBundles,
-      totalSales,
-      totalRevenue,
-      recentPurchases
-    ] = await Promise.all([
-      prisma.bundle.count(),
-      prisma.bundle.count({ where: { isActive: true } }),
-      prisma.bundle.count({ where: { isFeatured: true } }),
-      prisma.bundle.count({ where: { isPopular: true } }),
-      prisma.bundlePurchase.count(),
-      prisma.bundlePurchase.aggregate({
-        _sum: { finalPrice: true }
-      }),
-      prisma.bundlePurchase.findMany({
-        take: 10,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          bundle: { select: { id: true, name: true, type: true } },
-          user: { select: { id: true, name: true, email: true } }
-        }
-      })
-    ]);
-
-    // Top performing bundles
-    const topBundles = await prisma.bundle.findMany({
-      where: { salesCount: { gt: 0 } },
-      orderBy: [
-        { salesCount: 'desc' },
-        { revenue: 'desc' }
-      ],
-      take: 5,
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        salesCount: true,
-        revenue: true,
-        finalPrice: true
-      }
-    });
-
-    // Bundle type distribution
-    const bundleTypeStats = await prisma.bundle.groupBy({
-      by: ['type'],
-      _count: { id: true },
-      _sum: { revenue: true, salesCount: true }
-    });
-
-    res.json({
-      success: true,
-      dashboard: {
-        overview: {
-          totalBundles,
-          activeBundles,
-          featuredBundles,
-          popularBundles,
-          totalSales,
-          totalRevenue: totalRevenue._sum.finalPrice || 0
-        },
-        topBundles,
-        bundleTypeStats,
-        recentPurchases
-      }
-    });
-
-  } catch (error) {
-    console.error('Admin: Error fetching analytics dashboard:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics dashboard' });
-  }
-};
-
-// Auto-update popular bundles (run periodically)
-const updatePopularBundles = async (req, res) => {
-  try {
-    // Define popularity threshold (e.g., minimum 3 sales)
-    const popularityThreshold = parseInt(req.body.threshold) || 3;
+    const threshold = parseInt(req.body.threshold) || 3;
 
     // Reset all popular flags
     await prisma.bundle.updateMany({
       data: { isPopular: false }
     });
 
-    // Set popular flag for bundles meeting criteria
-    const updatedCount = await prisma.bundle.updateMany({
+    // Set popular flag for qualifying bundles
+    const result = await prisma.bundle.updateMany({
       where: {
-        salesCount: { gte: popularityThreshold },
+        salesCount: { gte: threshold },
         isActive: true
       },
       data: { isPopular: true }
@@ -256,21 +138,14 @@ const updatePopularBundles = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Updated ${updatedCount.count} bundles as popular`,
-      threshold: popularityThreshold
+      message: `Updated ${result.count} bundles as popular`,
+      threshold
     });
 
   } catch (error) {
-    console.error('Admin: Error updating popular bundles:', error);
+    console.error('❌ Update popular error:', error);
     res.status(500).json({ error: 'Failed to update popular bundles' });
   }
-};
-
-// Admin routes
-router.get('/', requireAuth, requireAdmin, getAllBundlesAdmin);
-router.put('/:bundleId/featured', requireAuth, requireAdmin, toggleBundleFeatured);
-router.put('/:bundleId/status', requireAuth, requireAdmin, updateBundleStatus);
-router.get('/analytics', requireAuth, requireAdmin, getBundleAnalyticsDashboard);
-router.post('/update-popular', requireAuth, requireAdmin, updatePopularBundles);
+});
 
 module.exports = router;
