@@ -370,26 +370,34 @@ const deleteVideo = async (req, res) => {
 };
 
 // Stream video file (for uploaded videos)
-const streamVideo = async (req, res) => {
+// Update your streamVideo function in backend/src/controllers/videoController.js
+
+const streamVideo = (req, res) => {
   try {
-    const { filename } = req.params;
-    const filePath = path.join(__dirname, '../../uploads/videos', filename);
-    
-    if (!fs.existsSync(filePath)) {
+    const filename = req.params.filename;
+    const videoPath = path.join(__dirname, '../../uploads/videos', filename);
+
+    // Check if file exists
+    if (!fs.existsSync(videoPath)) {
       return res.status(404).json({ error: 'Video file not found' });
     }
-    
-    const stat = fs.statSync(filePath);
+
+    const stat = fs.statSync(videoPath);
     const fileSize = stat.size;
     const range = req.headers.range;
-    
+
+    // Add CORS headers for video streaming
+    res.header('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Range');
+
     if (range) {
-      // Support range requests for video streaming
+      // Support for video seeking (range requests)
       const parts = range.replace(/bytes=/, "").split("-");
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(filePath, { start, end });
+      const file = fs.createReadStream(videoPath, { start, end });
       const head = {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
@@ -399,16 +407,66 @@ const streamVideo = async (req, res) => {
       res.writeHead(206, head);
       file.pipe(res);
     } else {
+      // No range request, send entire file
       const head = {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
       };
       res.writeHead(200, head);
-      fs.createReadStream(filePath).pipe(res);
+      fs.createReadStream(videoPath).pipe(res);
     }
   } catch (error) {
-    console.error('❌ BACKEND Videos: Stream video error:', error);
+    console.error('Error streaming video:', error);
     res.status(500).json({ error: 'Failed to stream video' });
+  }
+};
+
+const getVideoById = async (req, res) => {
+  try {
+    const videoId = parseInt(req.params.id);
+    
+    if (isNaN(videoId)) {
+      return res.status(400).json({ error: 'Invalid video ID' });
+    }
+
+    const video = await prisma.video.findUnique({
+      where: { id: videoId },
+      include: {
+        course: {
+          select: {
+            id: true,
+            title: true
+          }
+        },
+        module: {
+          select: {
+            id: true,
+            title: true
+          }
+        },
+        chapter: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      }
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    // Only return published videos for public access
+    if (!video.isPublished) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    res.json(video);
+  } catch (error) {
+    console.error('Error fetching video:', error);
+    res.status(500).json({ error: 'Failed to fetch video' });
   }
 };
 
@@ -420,5 +478,6 @@ module.exports = {
   getVideosByChapter,
   updateVideo,
   deleteVideo,
-  streamVideo
+  streamVideo,
+  getVideoById
 };

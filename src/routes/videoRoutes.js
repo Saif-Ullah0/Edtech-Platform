@@ -9,7 +9,8 @@ const {
   getVideosByChapter,
   updateVideo,
   deleteVideo,
-  streamVideo
+  streamVideo,
+  getVideoById  // ← ADD THIS IMPORT
 } = require('../controllers/videoController');
 const requireAuth = require('../middlewares/requireAuth');
 const requireAdmin = require('../middlewares/requireAdmin');
@@ -22,6 +23,7 @@ router.put('/:id', requireAuth, requireAdmin, uploadSingleVideo, updateVideo);
 router.delete('/:id', requireAuth, requireAdmin, deleteVideo);
 
 // Public routes (for students)
+router.get('/:id', getVideoById);  // ← ADD THIS LINE
 router.get('/course/:courseId', getVideosByCourse);
 router.get('/module/:moduleId', getVideosByModule);
 router.get('/chapter/:chapterId', getVideosByChapter);
