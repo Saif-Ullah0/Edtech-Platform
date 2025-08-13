@@ -6,31 +6,94 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // 🆕 ENHANCED: Get single course by ID with proper data structure
+// Add this to your existing courseController.js - UPDATE the getCourseById function
+
 const getCourseById = async (req, res) => {
   try {
     console.log('🎓 Fetching course:', req.params.id);
     
     const courseId = parseInt(req.params.id);
+    const userId = req.user?.id; // 🆕 NEW: Get user ID from auth middleware
+    
+    console.log('👤 User ID from request:', userId); // 🆕 NEW: Debug log
     
     if (isNaN(courseId)) {
       console.log('❌ Invalid course ID:', req.params.id);
       return res.status(400).json({ error: 'Invalid course ID' });
     }
 
-    const course = await courseService.getCourseById(courseId);
+    // 🆕 ENHANCED: Include videos in the course query
+    const course = await prisma.course.findUnique({
+      where: { 
+        id: courseId,
+        isDeleted: false 
+      },
+      include: {
+        category: true,
+        modules: {
+          where: { isPublished: true },
+          include: {
+            chapters: {
+              where: { publishStatus: 'PUBLISHED' },
+              include: {
+                // 🆕 NEW: Include videos for each chapter
+                videos: {
+                  where: { 
+                    isDeleted: false,
+                    isPublished: true 
+                  },
+                  select: {
+                    id: true,
+                    videoUrl: true,
+                    fileName: true,
+                    duration: true,
+                    fileSize: true
+                  }
+                }
+              },
+              orderBy: { order: 'asc' }
+            }
+          },
+          orderBy: { orderIndex: 'asc' }
+        }
+      }
+    });
     
     if (!course || course.isDeleted) {
       console.log('❌ Course not found:', courseId);
       return res.status(404).json({ error: 'Course not found' });
     }
     
-    // 🆕 Check if course is published (for students)
+    // Check if course is published (for students)
     if (course.publishStatus !== 'PUBLISHED') {
       console.log('❌ Course not published:', courseId);
       return res.status(404).json({ error: 'Course not available' });
     }
 
-    // 🆕 ENHANCED: Transform course data for frontend compatibility
+    // 🆕 NEW: Check if user is enrolled
+    let userEnrollment = null;
+    if (userId) {
+      console.log('🔍 Checking enrollment for user:', userId, 'in course:', courseId);
+      
+      userEnrollment = await prisma.enrollment.findFirst({
+        where: {
+          userId: userId,
+          courseId: courseId
+        },
+        select: {
+          id: true,
+          progress: true,
+          lastAccessed: true,
+          createdAt: true
+        }
+      });
+      
+      console.log('📋 Enrollment result:', userEnrollment); // 🆕 NEW: Debug log
+    } else {
+      console.log('❌ No user ID found in request - user not authenticated');
+    }
+
+    // 🆕 ENHANCED: Transform course data with video URLs
     const enhancedCourse = {
       id: course.id,
       title: course.title,
@@ -44,69 +107,86 @@ const getCourseById = async (req, res) => {
       duration: calculateCourseDuration(course.modules),
       level: determineCourseLevel(course.modules),
       enrollmentCount: await getEnrollmentCount(courseId),
-      rating: 4.5, // Default rating - you can implement actual ratings later
-      reviewCount: 12, // Default review count
+      rating: 4.5,
+      reviewCount: 12,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
       
-      // Category information
       category: {
         id: course.category?.id,
         name: course.category?.name || 'Uncategorized',
         description: course.category?.description
       },
       
-      // Creator/Instructor information
       creator: {
-        id: 1, // You'll need to add instructor relationship to your schema
+        id: 1,
         name: 'Course Instructor',
         email: 'instructor@example.com',
         bio: 'Experienced educator passionate about teaching',
         isAdmin: true
       },
       
-      // 🆕 ENHANCED: Transform modules with chapter data
-      modules: course.modules ? course.modules
-        .filter(module => module.isPublished)
-        .sort((a, b) => a.orderIndex - b.orderIndex)
-        .map(module => ({
-          id: module.id,
-          title: module.title,
-          description: module.description || `Learn about ${module.title}`,
-          duration: calculateModuleDuration(module.chapters),
-          orderIndex: module.orderIndex,
-          isPublished: module.isPublished,
-          price: module.price || 0,
-          isFree: module.isFree || module.price === 0,
+      // 🆕 ENHANCED: Transform modules with video data
+      modules: course.modules ? course.modules.map(module => ({
+        id: module.id,
+        title: module.title,
+        description: module.description || `Learn about ${module.title}`,
+        duration: calculateModuleDuration(module.chapters),
+        orderIndex: module.orderIndex,
+        isPublished: module.isPublished,
+        price: module.price || 0,
+        isFree: module.isFree || module.price === 0,
+        
+        // 🆕 NEW: Transform chapters with video data
+        chapters: module.chapters ? module.chapters.map(chapter => {
+          // Get the first video for this chapter
+          const video = chapter.videos?.[0];
           
-          // 🆕 Transform chapters for frontend
-          chapters: module.chapters ? module.chapters
-            .filter(chapter => chapter.publishStatus === 'PUBLISHED')
-            .sort((a, b) => a.order - b.order)
-            .map(chapter => ({
-              id: chapter.id,
-              title: chapter.title,
-              description: chapter.description,
-              content: chapter.content,
-              videoUrl: chapter.videoUrl,
-              type: chapter.type,
-              duration: chapter.videoDuration || 300, // 5 min default
-              orderIndex: chapter.order,
-              isPublished: chapter.publishStatus === 'PUBLISHED',
-              isFree: module.isFree || false, // Chapter is free if module is free
-              isCompleted: false // Will be populated for enrolled users
-            })) : []
-        })) : []
+          // 🆕 NEW: Generate proper video URL
+          const videoUrl = video 
+            ? (video.videoUrl?.startsWith('http') 
+              ? video.videoUrl 
+              : `${req.protocol}://${req.get('host')}${video.videoUrl}`)
+            : chapter.videoUrl; // Fallback to chapter videoUrl
+
+          return {
+            id: chapter.id,
+            title: chapter.title,
+            description: chapter.description,
+            content: chapter.content,
+            videoUrl: videoUrl, // 🆕 NEW: Include video URL
+            type: chapter.type,
+            duration: chapter.videoDuration || video?.duration || 300,
+            orderIndex: chapter.order,
+            isPublished: chapter.publishStatus === 'PUBLISHED',
+            isFree: module.isFree || false,
+            isCompleted: false, // Will be populated for enrolled users
+            
+            // 🆕 NEW: Video metadata
+            hasVideo: !!video || !!chapter.videoUrl,
+            videoDuration: video?.duration || chapter.videoDuration,
+            videoSize: video?.fileSize,
+            thumbnailUrl: chapter.thumbnailUrl
+          };
+        }) : []
+      })) : []
     };
 
     console.log('✅ Course fetched successfully:', enhancedCourse.title);
     console.log('📊 Course stats:', {
       modules: enhancedCourse.modules.length,
       totalChapters: enhancedCourse.modules.reduce((sum, m) => sum + m.chapters.length, 0),
-      duration: enhancedCourse.duration
+      videosFound: enhancedCourse.modules.reduce((sum, m) => 
+        sum + m.chapters.filter(ch => ch.hasVideo).length, 0),
+      duration: enhancedCourse.duration,
+      userEnrolled: !!userEnrollment // 🆕 NEW: Log enrollment status
     });
 
-    res.status(200).json({ course: enhancedCourse });
+    // 🆕 NEW: Return both course and enrollment data
+    res.status(200).json({ 
+      course: enhancedCourse,
+      userEnrollment: userEnrollment // 🆕 NEW: This was missing!
+    });
     
   } catch (error) {
     console.error('❌ Error fetching course:', error);
