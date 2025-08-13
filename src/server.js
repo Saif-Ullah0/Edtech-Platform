@@ -5,6 +5,10 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 
+// ✅ ADD: Prisma import for course purchase endpoint
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+
 const authRoutes = require('./routes/authRoutes');
 const protectedRoutes = require('./routes/protectedRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -30,6 +34,7 @@ const notesRoutes = require('./routes/notesRoutes');
 const chapterRoutes = require('./routes/chapterRoutes');
 const chapterAdminRoutes = require('./routes/admin/chapterAdminRoutes');
 
+// ✅ Bundle routes
 const bundleRoutes = require('./routes/bundleRoutes');
 const bundleAdminRoutes = require('./routes/admin/bundleAdminRoutes');
 
@@ -82,14 +87,14 @@ app.use('/api/enroll', requireAuth, enrollmentRoutes);
 app.use('/api/enrollments', requireAuth, enrollmentRoutes); // Frontend calls /api/enrollments/my-courses
 
 app.use('/api/videos', videoRoutes);
-
 app.use('/api/progress', progressRoutes);
-
-
 app.use('/api/notes', notesRoutes);
-
 app.use('/api/comments', commentRoutes);
 app.use('/api/discounts', discountRoutes);
+
+// ✅ FIXED: Bundle routes (middleware is applied at route level)
+app.use('/api/bundles', bundleRoutes);
+app.use('/api/admin/bundles', bundleAdminRoutes);
 
 // Admin routes (require authentication + admin role)
 app.use('/api/admin/categories', requireAuth, requireAdmin, adminCategoryRoutes);
@@ -101,10 +106,6 @@ app.use('/api/admin/users', requireAuth, requireAdmin, adminUserRoutes);
 
 app.use('/api/chapters', chapterRoutes);
 app.use('/api/admin/chapters', chapterAdminRoutes);
-
-app.use('/api/bundles', bundleRoutes);
-app.use('/api/admin/bundles', bundleAdminRoutes);
-app.use('/api/admin/bundles', requireAuth, requireAdmin, bundleAdminRoutes);
 
 app.get('/api/me', requireAuth, (req, res) => {
   try {
@@ -255,7 +256,9 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📱 Frontend URL: http://localhost:3000`);
+  console.log(`⚡ API URL: http://localhost:${PORT}/api`);
   console.log(`Uploads directory: ${path.join(__dirname, 'uploads')}`);
   console.log(`Video uploads available at: http://localhost:${PORT}/uploads/videos/`);
 });
