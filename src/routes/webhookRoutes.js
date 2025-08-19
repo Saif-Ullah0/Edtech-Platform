@@ -17,7 +17,7 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error(' Webhook signature verification failed.', err.message);
+    console.error('Webhook signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
@@ -27,35 +27,75 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
     const session = event.data.object;
     const userId = parseInt(session.metadata.userId);
     const orderId = parseInt(session.metadata.orderId);
+    const courseId = parseInt(session.metadata.courseId);
+    const discountCode = session.metadata.discountCode; // NEW
+    const discountAmount = parseFloat(session.metadata.discountAmount || '0'); // NEW
+    const finalAmount = parseFloat(session.metadata.finalAmount); // NEW
 
-    console.log(' Metadata:', { userId, orderId });
+    console.log('Metadata:', { userId, orderId, courseId, discountCode, discountAmount, finalAmount });
 
     try {
-      // ✅ 1. Mark order as COMPLETED
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { status: 'COMPLETED' },
-      });
+      await prisma.$transaction(async (tx) => {
+        // 1. Mark order as COMPLETED
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: 'COMPLETED' },
+        });
 
-      // ✅ 2. Get all courses from the order
-      const orderItems = await prisma.orderItem.findMany({
-        where: { orderId },
-      });
-
-      // ✅ 3. Enroll user in each course
-      for (const item of orderItems) {
-        await prisma.enrollment.create({
-          data: {
-            userId,
-            courseId: item.courseId,
+        // 2. Enroll user in the course
+        const existingEnrollment = await tx.enrollment.findUnique({
+          where: {
+            userId_courseId: {
+              userId,
+              courseId,
+            },
           },
         });
-        console.log(` Enrolled user ${userId} in course ${item.courseId}`);
-      }
 
-      console.log(' Payment success handled, order completed.');
+        if (!existingEnrollment) {
+          await tx.enrollment.create({
+            data: {
+              userId,
+              courseId,
+              paymentTransactionId: session.id,
+            },
+          });
+        }
+
+        // 3. Record discount usage if applicable
+        if (discountCode) {
+          const discount = await tx.discountCode.findUnique({
+            where: { code: discountCode },
+          });
+
+          if (!discount) {
+            console.error('Discount code not found:', discountCode);
+            throw new Error('Invalid discount code in webhook');
+          }
+
+          await tx.discountUsage.create({
+            data: {
+              discountCodeId: discount.id,
+              userId,
+              orderId,
+              originalAmount: finalAmount + discountAmount,
+              discountAmount,
+              finalAmount,
+            },
+          });
+
+          await tx.discountCode.update({
+            where: { id: discount.id },
+            data: { usedCount: { increment: 1 } },
+          });
+        }
+
+        console.log(`Enrolled user ${userId} in course ${courseId}`);
+      });
+
+      console.log('Payment success handled, order completed.');
     } catch (err) {
-      console.error(' Error in webhook logic:', err);
+      console.error('Error in webhook logic:', err);
       return res.status(500).send('Webhook handling failed');
     }
   }
