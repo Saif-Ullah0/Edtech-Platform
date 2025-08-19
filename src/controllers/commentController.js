@@ -37,7 +37,6 @@ const getComments = async (req, res) => {
       }
     });
 
-    // Transform comments to match frontend expectations
     const userId = req.user?.userId; // Get user ID from auth middleware if available
     
     const transformedComments = comments.map(comment => {

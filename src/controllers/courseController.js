@@ -488,6 +488,243 @@ const getCoursesForAdmin = async (req, res) => {
   }
 };
 
+const Stripe = require('stripe');
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+const purchaseCourse = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { courseId, discountCode } = req.body;
+
+    if (!courseId || isNaN(parseInt(courseId))) {
+      return res.status(400).json({ error: 'Valid course ID is required' });
+    }
+
+    const parsedCourseId = parseInt(courseId);
+
+    // Get course details
+    const course = await prisma.course.findUnique({
+      where: { id: parsedCourseId },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        publishStatus: true,
+        isDeleted: true,
+      },
+    });
+
+    if (!course || course.isDeleted || course.publishStatus !== 'PUBLISHED') {
+      return res.status(404).json({ error: 'Course not found or not available' });
+    }
+
+    if (course.price === 0) {
+      return res.status(400).json({ error: 'This is a free course. Use the enroll endpoint instead.' });
+    }
+
+    // Check if already enrolled
+    const existingEnrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId,
+          courseId: parsedCourseId,
+        },
+      },
+    });
+
+    if (existingEnrollment) {
+      return res.status(400).json({ error: 'Already enrolled in this course' });
+    }
+
+    let originalAmount = course.price;
+    let discountAmount = 0;
+    let finalAmount = originalAmount;
+    let appliedDiscountCode = null;
+
+    // Validate discount code if provided
+    if (discountCode) {
+      const discount = await prisma.discountCode.findUnique({
+        where: { code: discountCode.toUpperCase() },
+        include: {
+          usages: {
+            where: { userId },
+          },
+        },
+      });
+
+      if (!discount || !discount.isActive) {
+        return res.status(400).json({ error: 'Invalid or inactive discount code' });
+      }
+
+      if (discount.expiresAt && new Date() > discount.expiresAt) {
+        return res.status(400).json({ error: 'This discount code has expired' });
+      }
+
+      if (discount.startsAt && new Date() < discount.startsAt) {
+        return res.status(400).json({ error: 'This discount code is not yet active' });
+      }
+
+      if (discount.maxUses && discount.usedCount >= discount.maxUses) {
+        return res.status(400).json({ error: 'This discount code has reached its usage limit' });
+      }
+
+      if (discount.maxUsesPerUser && discount.usages.length >= discount.maxUsesPerUser) {
+        return res.status(400).json({ error: 'You have already used this discount code' });
+      }
+
+      if (discount.minPurchaseAmount && originalAmount < discount.minPurchaseAmount) {
+        return res.status(400).json({ error: `Minimum purchase amount of $${discount.minPurchaseAmount} required` });
+      }
+
+      if (discount.applicableToType !== 'ALL' && discount.applicableToType !== 'COURSE') {
+        return res.status(400).json({ error: 'This discount code is not applicable to courses' });
+      }
+
+      // Calculate discount
+      if (discount.type === 'PERCENTAGE') {
+        discountAmount = (originalAmount * discount.value) / 100;
+        if (discount.maxDiscountAmount && discountAmount > discount.maxDiscountAmount) {
+          discountAmount = discount.maxDiscountAmount;
+        }
+      } else {
+        discountAmount = Math.min(discount.value, originalAmount);
+      }
+
+      finalAmount = Math.max(0, originalAmount - discountAmount);
+      appliedDiscountCode = discount;
+    }
+
+    // Create order
+    const order = await prisma.order.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        totalAmount: finalAmount,
+      },
+    });
+
+    // Create order item
+    await prisma.orderItem.create({
+      data: {
+        orderId: order.id,
+        courseId: parsedCourseId,
+        price: finalAmount,
+      },
+    });
+
+    // Handle 100% discount (free enrollment)
+    if (finalAmount === 0) {
+      const enrollment = await prisma.$transaction(async (tx) => {
+        const newEnrollment = await tx.enrollment.create({
+          data: {
+            userId,
+            courseId: parsedCourseId,
+            progress: 0,
+            paymentTransactionId: `free_${Date.now()}_${userId}_${parsedCourseId}`,
+          },
+          include: {
+            course: {
+              select: { id: true, title: true, price: true },
+            },
+          },
+        });
+
+        if (appliedDiscountCode) {
+          await tx.discountUsage.create({
+            data: {
+              discountCodeId: appliedDiscountCode.id,
+              userId,
+              orderId: order.id,
+              originalAmount,
+              discountAmount,
+              finalAmount,
+            },
+          });
+
+          await tx.discountCode.update({
+            where: { id: appliedDiscountCode.id },
+            data: { usedCount: { increment: 1 } },
+          });
+        }
+
+        // Update order status to COMPLETED
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'COMPLETED' },
+        });
+
+        return newEnrollment;
+      });
+
+      return res.status(201).json({
+        message: 'Course enrolled for free due to discount',
+        enrollment: {
+          id: enrollment.id,
+          courseId: enrollment.courseId,
+          courseName: enrollment.course.title,
+          purchasedAt: enrollment.createdAt,
+          transactionId: enrollment.paymentTransactionId,
+          discountApplied: appliedDiscountCode
+            ? {
+                code: appliedDiscountCode.code,
+                discountAmount: Number(discountAmount.toFixed(2)),
+                finalAmount: Number(finalAmount.toFixed(2)),
+              }
+            : null,
+        },
+      });
+    }
+
+    // Create Stripe checkout session for paid enrollment
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: course.title,
+              metadata: { courseId: parsedCourseId },
+            },
+            unit_amount: Math.round(finalAmount * 100), // Stripe expects cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+      metadata: {
+        userId: userId.toString(),
+        orderId: order.id.toString(),
+        courseId: parsedCourseId.toString(),
+        discountCode: appliedDiscountCode ? appliedDiscountCode.code : null,
+        discountAmount: discountAmount.toString(),
+        finalAmount: finalAmount.toString(),
+      },
+    });
+
+    res.status(200).json({
+      message: 'Checkout session created successfully',
+      sessionId: session.id,
+      orderId: order.id,
+      discountApplied: appliedDiscountCode
+        ? {
+            code: appliedDiscountCode.code,
+            discountAmount: Number(discountAmount.toFixed(2)),
+            finalAmount: Number(finalAmount.toFixed(2)),
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('Error purchasing course:', error);
+    res.status(500).json({
+      error: 'Failed to purchase course',
+      message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
+    });
+  }
+};
+
 module.exports = {
   getCourses,
   getCoursesForAdmin,
@@ -496,5 +733,6 @@ module.exports = {
   createCourse,
   updateCourse,
   deleteCourse,
-  searchCourses
+  searchCourses,
+  purchaseCourse, // NEW
 };
