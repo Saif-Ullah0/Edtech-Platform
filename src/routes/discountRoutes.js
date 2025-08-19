@@ -1,14 +1,16 @@
-// backend/src/routes/discountRoutes.js
 const express = require('express');
 const router = express.Router();
 const {
   validateDiscountCode,
   applyDiscountCode,
   createDiscountCode,
-  getDiscountCodes
+  getDiscountCodes,
+  updateDiscountCode,
+  deleteDiscountCode,
+  getDiscountAnalytics, // NEW
 } = require('../controllers/discountController');
-const requireAuth = require('../middlewares/requireAuth'); // ⚠️ CHECK THIS PATH
-const requireAdmin = require('../middlewares/requireAdmin'); // ⚠️ CHECK THIS PATH
+const requireAuth = require('../middlewares/requireAuth');
+const requireAdmin = require('../middlewares/requireAdmin');
 
 // User routes (require auth)
 router.use(requireAuth);
@@ -19,5 +21,8 @@ router.post('/apply', applyDiscountCode);
 router.use(requireAdmin);
 router.post('/', createDiscountCode);
 router.get('/', getDiscountCodes);
+router.put('/:id', updateDiscountCode);
+router.delete('/:id', deleteDiscountCode);
+router.get('/analytics/:id', getDiscountAnalytics); // NEW
 
-module.exports = router; // ✅ Make sure this line exists
+module.exports = router;

@@ -1,14 +1,7 @@
-// Updated courseRoutes.js with proper authentication
-
 const express = require('express');
 const router = express.Router();
-
-// 🆕 NEW: Import authentication middleware
 const requireAuth = require('../middlewares/requireAuth');
 const requireAdmin = require('../middlewares/requireAdmin');
-
-const courseController = require('../controllers/courseController');
-
 const {
   getCourses,
   getCoursesForAdmin,
@@ -17,15 +10,17 @@ const {
   createCourse,
   updateCourse,
   deleteCourse,
-  searchCourses
-} = courseController;
+  searchCourses,
+  purchaseCourse, // NEW
+} = require('../controllers/courseController');
 
 // Public routes (no auth required)
 router.get('/', getCourses);                    // Browse courses
 router.get('/search', searchCourses);           // Search courses
 
-// 🆕 FIXED: Student routes (require auth to check enrollment)
-router.get('/:id', requireAuth, getCourseById); // ← Added requireAuth here!
+// Student routes (require auth)
+router.get('/:id', requireAuth, getCourseById); // Get course details
+router.post('/purchase', requireAuth, purchaseCourse); // NEW: Course purchase
 
 // Admin routes (require admin auth)
 router.get('/admin', requireAdmin, getCoursesForAdmin);
