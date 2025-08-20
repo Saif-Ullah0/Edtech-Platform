@@ -96,6 +96,13 @@ model CommentReaction {
   @@map("comment_reactions")
 }
 
+enum DiscountApplicableType {
+  ALL
+  CATEGORY
+  COURSE
+}
+
+// Update your existing DiscountCode model with these changes
 model DiscountCode {
   id          Int       @id @default(autoincrement())
   code        String    @unique
@@ -115,7 +122,10 @@ model DiscountCode {
   minPurchaseAmount Float? @default(0)
   maxDiscountAmount Float?
   
-  applicableToType String @default("ALL")
+  // 🆕 UPDATED: Change from String to enum
+  applicableToType  DiscountApplicableType @default(ALL)
+  // 🆕 NEW: Add specific ID for course or category
+  applicableToId    Int?
   
   isActive    Boolean @default(true)
   isPublic    Boolean @default(false)
