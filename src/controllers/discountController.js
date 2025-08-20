@@ -2,11 +2,13 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// Validate discount code
+// 🆕 ENHANCED: Validate discount code with category/course support
 const validateDiscountCode = async (req, res) => {
   try {
     const { code, purchaseAmount, itemType, itemId } = req.body;
     const userId = req.user.id;
+
+    console.log('🔍 Validating discount:', { code, purchaseAmount, itemType, itemId, userId });
 
     if (!code || !purchaseAmount || !itemType || !itemId) {
       return res.status(400).json({
@@ -85,16 +87,53 @@ const validateDiscountCode = async (req, res) => {
       });
     }
 
-    // Check applicability
+    // 🆕 ENHANCED: Check applicability with category/course support
     if (discountCode.applicableToType !== 'ALL') {
-      if (discountCode.applicableToType !== itemType) {
+      console.log('🔍 Checking applicability:', {
+        discountType: discountCode.applicableToType,
+        discountId: discountCode.applicableToId,
+        requestType: itemType,
+        requestId: itemId
+      });
+
+      // Direct type match (e.g., COURSE discount for COURSE purchase)
+      if (discountCode.applicableToType === itemType) {
+        if (discountCode.applicableToId && discountCode.applicableToId !== parseInt(itemId)) {
+          return res.status(400).json({
+            success: false,
+            message: `This discount code is only applicable to a specific ${itemType.toLowerCase()}`,
+          });
+        }
+      }
+      // Category-specific discount for course purchase
+      else if (discountCode.applicableToType === 'CATEGORY' && itemType === 'COURSE') {
+        // Get the course's category
+        const course = await prisma.course.findUnique({
+          where: { id: parseInt(itemId) },
+          select: { categoryId: true }
+        });
+
+        if (!course) {
+          return res.status(400).json({
+            success: false,
+            message: 'Course not found',
+          });
+        }
+
+        if (discountCode.applicableToId && discountCode.applicableToId !== course.categoryId) {
+          return res.status(400).json({
+            success: false,
+            message: 'This discount code is not applicable to this course category',
+          });
+        }
+      }
+      // Other combinations not supported
+      else {
         return res.status(400).json({
           success: false,
           message: `This discount code is only applicable to ${discountCode.applicableToType.toLowerCase()}s`,
         });
       }
-      // Optionally, check if the specific itemId is allowed (e.g., specific course or bundle)
-      // This requires an additional table for specific item mappings, which we can add later if needed.
     }
 
     // Calculate discount
@@ -110,6 +149,13 @@ const validateDiscountCode = async (req, res) => {
 
     const finalAmount = Math.max(0, purchaseAmount - discountAmount);
 
+    console.log('✅ Discount validated successfully:', {
+      code: discountCode.code,
+      originalAmount: purchaseAmount,
+      discountAmount: Number(discountAmount.toFixed(2)),
+      finalAmount: Number(finalAmount.toFixed(2))
+    });
+
     res.json({
       success: true,
       data: {
@@ -119,6 +165,8 @@ const validateDiscountCode = async (req, res) => {
           name: discountCode.name,
           type: discountCode.type,
           value: discountCode.value,
+          applicableToType: discountCode.applicableToType,
+          applicableToId: discountCode.applicableToId,
         },
         calculation: {
           originalAmount: purchaseAmount,
@@ -128,14 +176,15 @@ const validateDiscountCode = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Error validating discount:', error);
+    console.error('❌ Error validating discount:', error);
     res.status(500).json({
       success: false,
       message: process.env.NODE_ENV === 'production' ? 'Failed to validate discount code' : error.message,
     });
   }
 };
-// Apply discount code
+
+// Apply discount code (keep existing)
 const applyDiscountCode = async (req, res) => {
   try {
     const { code, originalAmount, discountAmount, finalAmount, bundleId } = req.body;
@@ -186,17 +235,76 @@ const applyDiscountCode = async (req, res) => {
   }
 };
 
-// Create discount code (Admin only)
+// 🆕 ENHANCED: Create discount code with category/course support
 const createDiscountCode = async (req, res) => {
   try {
-    const { code, name, type, value, maxUses, expiresAt, minPurchaseAmount } = req.body;
+    const { 
+      code, 
+      name, 
+      description,
+      type, 
+      value, 
+      maxUses, 
+      maxUsesPerUser,
+      startsAt,
+      expiresAt, 
+      minPurchaseAmount,
+      maxDiscountAmount,
+      applicableToType,
+      applicableToId,
+      isActive,
+      isPublic
+    } = req.body;
     const userId = req.user.id;
+    
+    console.log('🔍 Creating discount code:', req.body);
     
     if (!code || !type || value === undefined) {
       return res.status(400).json({
         success: false,
         message: 'Code, type, and value are required'
       });
+    }
+
+    // Validate applicableToType
+    if (applicableToType && !['ALL', 'CATEGORY', 'COURSE'].includes(applicableToType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'applicableToType must be ALL, CATEGORY, or COURSE'
+      });
+    }
+
+    // Validate that if applicableToType is not ALL, applicableToId is provided
+    if (applicableToType && applicableToType !== 'ALL' && !applicableToId) {
+      return res.status(400).json({
+        success: false,
+        message: `applicableToId is required when applicableToType is ${applicableToType}`
+      });
+    }
+
+    // Validate that the referenced category/course exists
+    if (applicableToType === 'CATEGORY' && applicableToId) {
+      const category = await prisma.category.findUnique({
+        where: { id: parseInt(applicableToId) }
+      });
+      if (!category) {
+        return res.status(400).json({
+          success: false,
+          message: 'Referenced category does not exist'
+        });
+      }
+    }
+
+    if (applicableToType === 'COURSE' && applicableToId) {
+      const course = await prisma.course.findUnique({
+        where: { id: parseInt(applicableToId) }
+      });
+      if (!course) {
+        return res.status(400).json({
+          success: false,
+          message: 'Referenced course does not exist'
+        });
+      }
     }
     
     const existingCode = await prisma.discountCode.findUnique({
@@ -214,14 +322,24 @@ const createDiscountCode = async (req, res) => {
       data: {
         code: code.toUpperCase(),
         name,
+        description,
         type,
-        value,
-        maxUses: maxUses || null,
+        value: parseFloat(value),
+        maxUses: maxUses ? parseInt(maxUses) : null,
+        maxUsesPerUser: maxUsesPerUser ? parseInt(maxUsesPerUser) : 1,
+        startsAt: startsAt ? new Date(startsAt) : null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
-        minPurchaseAmount: minPurchaseAmount || 0,
+        minPurchaseAmount: minPurchaseAmount ? parseFloat(minPurchaseAmount) : 0,
+        maxDiscountAmount: maxDiscountAmount ? parseFloat(maxDiscountAmount) : null,
+        applicableToType: applicableToType || 'ALL',
+        applicableToId: applicableToId ? parseInt(applicableToId) : null,
+        isActive: isActive !== undefined ? isActive : true,
+        isPublic: isPublic !== undefined ? isPublic : false,
         createdBy: userId
       }
     });
+    
+    console.log('✅ Discount code created successfully:', discountCode);
     
     res.status(201).json({
       success: true,
@@ -229,35 +347,70 @@ const createDiscountCode = async (req, res) => {
       message: 'Discount code created successfully'
     });
   } catch (error) {
-    console.error('Error creating discount:', error);
+    console.error('❌ Error creating discount:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create discount code'
+      message: process.env.NODE_ENV === 'production' ? 'Failed to create discount code' : error.message
     });
   }
 };
 
-// Get all discount codes (Admin only)
+// 🆕 ENHANCED: Get discount codes with category/course details
 const getDiscountCodes = async (req, res) => {
   try {
+    console.log('🔍 Fetching discount codes...');
+    
     const discountCodes = await prisma.discountCode.findMany({
       include: {
         creator: {
           select: { id: true, name: true, email: true }
         },
         usages: {
-          select: { id: true, discountAmount: true }
+          select: { 
+            id: true, 
+            discountAmount: true,
+            createdAt: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' }
     });
+
+    // 🆕 Enhanced: Add category/course names for display
+    const enhancedDiscountCodes = await Promise.all(
+      discountCodes.map(async (discount) => {
+        let applicableToName = null;
+        
+        if (discount.applicableToType === 'CATEGORY' && discount.applicableToId) {
+          const category = await prisma.category.findUnique({
+            where: { id: discount.applicableToId },
+            select: { name: true }
+          });
+          applicableToName = category?.name || 'Unknown Category';
+        } else if (discount.applicableToType === 'COURSE' && discount.applicableToId) {
+          const course = await prisma.course.findUnique({
+            where: { id: discount.applicableToId },
+            select: { title: true }
+          });
+          applicableToName = course?.title || 'Unknown Course';
+        }
+
+        return {
+          ...discount,
+          applicableToName,
+          totalSavings: discount.usages.reduce((sum, usage) => sum + usage.discountAmount, 0)
+        };
+      })
+    );
+    
+    console.log('✅ Found discount codes:', enhancedDiscountCodes.length);
     
     res.json({
       success: true,
-      data: { discountCodes }
+      data: { discountCodes: enhancedDiscountCodes }
     });
   } catch (error) {
-    console.error('Error fetching discounts:', error);
+    console.error('❌ Error fetching discounts:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch discount codes'
@@ -265,11 +418,29 @@ const getDiscountCodes = async (req, res) => {
   }
 };
 
-// Update discount code (Admin only)
+// 🆕 ENHANCED: Update discount code with category/course support
 const updateDiscountCode = async (req, res) => {
   try {
     const { id } = req.params;
-    const { code, name, type, value, maxUses, expiresAt, minPurchaseAmount, isActive, isPublic } = req.body;
+    const { 
+      code, 
+      name, 
+      description,
+      type, 
+      value, 
+      maxUses, 
+      maxUsesPerUser,
+      startsAt,
+      expiresAt, 
+      minPurchaseAmount,
+      maxDiscountAmount,
+      applicableToType,
+      applicableToId,
+      isActive, 
+      isPublic 
+    } = req.body;
+
+    console.log('🔍 Updating discount code:', id, req.body);
 
     // Validate required fields
     if (!id || isNaN(parseInt(id))) {
@@ -304,22 +475,71 @@ const updateDiscountCode = async (req, res) => {
       }
     }
 
+    // Validate applicableToType
+    if (applicableToType && !['ALL', 'CATEGORY', 'COURSE'].includes(applicableToType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'applicableToType must be ALL, CATEGORY, or COURSE'
+      });
+    }
+
+    // Validate that if applicableToType is not ALL, applicableToId is provided
+    if (applicableToType && applicableToType !== 'ALL' && applicableToId === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: `applicableToId is required when applicableToType is ${applicableToType}`
+      });
+    }
+
+    // Validate that the referenced category/course exists
+    if (applicableToType === 'CATEGORY' && applicableToId) {
+      const category = await prisma.category.findUnique({
+        where: { id: parseInt(applicableToId) }
+      });
+      if (!category) {
+        return res.status(400).json({
+          success: false,
+          message: 'Referenced category does not exist'
+        });
+      }
+    }
+
+    if (applicableToType === 'COURSE' && applicableToId) {
+      const course = await prisma.course.findUnique({
+        where: { id: parseInt(applicableToId) }
+      });
+      if (!course) {
+        return res.status(400).json({
+          success: false,
+          message: 'Referenced course does not exist'
+        });
+      }
+    }
+
     // Update discount code
     const updatedCode = await prisma.discountCode.update({
       where: { id: parseInt(id) },
       data: {
         code: code ? code.toUpperCase() : existingCode.code,
         name: name !== undefined ? name : existingCode.name,
+        description: description !== undefined ? description : existingCode.description,
         type: type || existingCode.type,
-        value: value !== undefined ? value : existingCode.value,
-        maxUses: maxUses !== undefined ? maxUses : existingCode.maxUses,
-        expiresAt: expiresAt ? new Date(expiresAt) : existingCode.expiresAt,
-        minPurchaseAmount: minPurchaseAmount !== undefined ? minPurchaseAmount : existingCode.minPurchaseAmount,
+        value: value !== undefined ? parseFloat(value) : existingCode.value,
+        maxUses: maxUses !== undefined ? (maxUses ? parseInt(maxUses) : null) : existingCode.maxUses,
+        maxUsesPerUser: maxUsesPerUser !== undefined ? parseInt(maxUsesPerUser) : existingCode.maxUsesPerUser,
+        startsAt: startsAt !== undefined ? (startsAt ? new Date(startsAt) : null) : existingCode.startsAt,
+        expiresAt: expiresAt !== undefined ? (expiresAt ? new Date(expiresAt) : null) : existingCode.expiresAt,
+        minPurchaseAmount: minPurchaseAmount !== undefined ? parseFloat(minPurchaseAmount) : existingCode.minPurchaseAmount,
+        maxDiscountAmount: maxDiscountAmount !== undefined ? (maxDiscountAmount ? parseFloat(maxDiscountAmount) : null) : existingCode.maxDiscountAmount,
+        applicableToType: applicableToType || existingCode.applicableToType,
+        applicableToId: applicableToId !== undefined ? (applicableToId ? parseInt(applicableToId) : null) : existingCode.applicableToId,
         isActive: isActive !== undefined ? isActive : existingCode.isActive,
         isPublic: isPublic !== undefined ? isPublic : existingCode.isPublic,
         updatedAt: new Date(),
       },
     });
+
+    console.log('✅ Discount code updated successfully:', updatedCode);
 
     res.json({
       success: true,
@@ -327,7 +547,7 @@ const updateDiscountCode = async (req, res) => {
       message: 'Discount code updated successfully',
     });
   } catch (error) {
-    console.error('Error updating discount:', error);
+    console.error('❌ Error updating discount:', error);
     res.status(500).json({
       success: false,
       message: process.env.NODE_ENV === 'production' ? 'Failed to update discount code' : error.message,
@@ -335,8 +555,7 @@ const updateDiscountCode = async (req, res) => {
   }
 };
 
-
-// Delete discount code (Admin only)
+// Keep existing delete function
 const deleteDiscountCode = async (req, res) => {
   try {
     const { id } = req.params;
@@ -381,8 +600,7 @@ const deleteDiscountCode = async (req, res) => {
   }
 };
 
-// ... other imports and functions ...
-
+// 🆕 ENHANCED: Analytics with category/course breakdown
 const getDiscountAnalytics = async (req, res) => {
   try {
     const { id } = req.params;
@@ -406,6 +624,7 @@ const getDiscountAnalytics = async (req, res) => {
             finalAmount: true,
             createdAt: true,
           },
+          orderBy: { createdAt: 'desc' }
         },
       },
     });
@@ -418,15 +637,41 @@ const getDiscountAnalytics = async (req, res) => {
     }
 
     const totalDiscountAmount = discountCode.usages.reduce((sum, usage) => sum + usage.discountAmount, 0);
+    const totalOriginalAmount = discountCode.usages.reduce((sum, usage) => sum + usage.originalAmount, 0);
+
+    // Get applicable item name
+    let applicableToName = 'All Items';
+    if (discountCode.applicableToType === 'CATEGORY' && discountCode.applicableToId) {
+      const category = await prisma.category.findUnique({
+        where: { id: discountCode.applicableToId },
+        select: { name: true }
+      });
+      applicableToName = category?.name || 'Unknown Category';
+    } else if (discountCode.applicableToType === 'COURSE' && discountCode.applicableToId) {
+      const course = await prisma.course.findUnique({
+        where: { id: discountCode.applicableToId },
+        select: { title: true }
+      });
+      applicableToName = course?.title || 'Unknown Course';
+    }
 
     res.json({
       success: true,
       data: {
         id: discountCode.id,
         code: discountCode.code,
+        name: discountCode.name,
+        applicableToType: discountCode.applicableToType,
+        applicableToName,
         totalUsages: discountCode.usedCount,
         totalDiscountAmount: Number(totalDiscountAmount.toFixed(2)),
+        totalOriginalAmount: Number(totalOriginalAmount.toFixed(2)),
+        averageDiscountPerUsage: discountCode.usedCount > 0 ? Number((totalDiscountAmount / discountCode.usedCount).toFixed(2)) : 0,
         usageDetails: discountCode.usages,
+        isActive: discountCode.isActive,
+        expiresAt: discountCode.expiresAt,
+        maxUses: discountCode.maxUses,
+        remainingUses: discountCode.maxUses ? discountCode.maxUses - discountCode.usedCount : null
       },
     });
   } catch (error) {
@@ -434,6 +679,89 @@ const getDiscountAnalytics = async (req, res) => {
     res.status(500).json({
       success: false,
       message: process.env.NODE_ENV === 'production' ? 'Failed to fetch discount analytics' : error.message,
+    });
+  }
+};
+
+// 🆕 NEW: Get general analytics for all discounts
+const getGeneralAnalytics = async (req, res) => {
+  try {
+    console.log('🔍 Fetching general discount analytics...');
+    
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalCodes,
+      activeCodes, 
+      totalUsages,
+      totalSavings,
+      expiringSoon,
+      recentUsages
+    ] = await Promise.all([
+      // Total discount codes
+      prisma.discountCode.count(),
+      
+      // Active discount codes
+      prisma.discountCode.count({
+        where: { isActive: true }
+      }),
+      
+      // Total usage count
+      prisma.discountUsage.count(),
+      
+      // Total savings amount
+      prisma.discountUsage.aggregate({
+        _sum: { discountAmount: true }
+      }),
+      
+      // Codes expiring soon
+      prisma.discountCode.count({
+        where: {
+          isActive: true,
+          expiresAt: {
+            gte: now,
+            lte: sevenDaysFromNow
+          }
+        }
+      }),
+      
+      // Recent usage activity (last 30 days)
+      prisma.discountUsage.findMany({
+        where: {
+          createdAt: {
+            gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+          }
+        },
+        select: {
+          discountAmount: true,
+          createdAt: true
+        },
+        orderBy: { createdAt: 'desc' }
+      })
+    ]);
+
+    console.log('✅ General analytics fetched successfully');
+
+    res.json({
+      success: true,
+      data: {
+        totalCodes,
+        activeCodes,
+        totalUsages,
+        totalSavings: Number((totalSavings._sum.discountAmount || 0).toFixed(2)),
+        expiringSoon,
+        recentActivity: {
+          last30Days: recentUsages.length,
+          totalSavingsLast30Days: Number(recentUsages.reduce((sum, usage) => sum + usage.discountAmount, 0).toFixed(2))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching general analytics:', error);
+    res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Failed to fetch analytics' : error.message
     });
   }
 };
@@ -446,4 +774,5 @@ module.exports = {
   updateDiscountCode,
   deleteDiscountCode,
   getDiscountAnalytics,
+  getGeneralAnalytics, // 🆕 NEW
 };
