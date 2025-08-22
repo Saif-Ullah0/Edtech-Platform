@@ -867,6 +867,115 @@ const purchaseBundle = async (req, res) => {
   }
 };
 
+const getFeaturedBundles = async (req, res) => {
+  console.log('🔍 BUNDLE ROUTE: GET /api/bundles/featured?limit=', req.query.limit);
+  try {
+    const limit = parseInt(req.query.limit) || 4;
+    const bundles = await prisma.bundle.findMany({
+      where: {
+        isFeatured: true,
+        isActive: true,
+      },
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        },
+        courseItems: {
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                price: true,
+                isPaid: true,
+                imageUrl: true,
+                category: {
+                  select: {
+                    name: true,
+                  },
+                },
+                modules: {
+                  select: {
+                    id: true,
+                    title: true,
+                    chapters: {
+                      select: {
+                        id: true,
+                        title: true,
+                        type: true,
+                        duration: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        moduleItems: {
+          include: {
+            module: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                price: true,
+                isFree: true,
+                course: {
+                  select: {
+                    id: true,
+                    title: true,
+                    imageUrl: true,
+                    category: {
+                      select: {
+                        name: true,
+                      },
+                    },
+                  },
+                },
+                chapters: {
+                  select: {
+                    id: true,
+                    title: true,
+                    type: true,
+                    duration: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        purchases: {
+          take: 10,
+          orderBy: {
+            createdAt: 'desc',
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res.status(200).json({ data: bundles });
+  } catch (error) {
+    console.error('❌ Error fetching featured bundles:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch featured bundles' });
+  }
+};
+
 module.exports = {
   getBundleAnalytics,
   getAvailableCourses,
@@ -876,5 +985,6 @@ module.exports = {
   getBundleById,
   updateBundle,
   deleteBundle,
-  purchaseBundle
+  purchaseBundle,
+  getFeaturedBundles
 };
