@@ -1,3 +1,10 @@
+// schema.prisma - UPDATED
+// Changes:
+// - Added discountCodeId to Order model for direct linking as per desired solution.
+// - Added relation to DiscountCode.
+// - No other changes needed; existing DiscountCode and DiscountUsage are sufficient.
+// - Ensured DiscountUsage can link to Order.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -131,6 +138,8 @@ model DiscountCode {
   isPublic    Boolean @default(false)
   
   usages      DiscountUsage[]
+  // 🆕 NEW: Direct link to orders
+  orders      Order[]
   
   createdBy   Int?
   creator     User?   @relation("DiscountCreator", fields: [createdBy], references: [id])
@@ -562,6 +571,9 @@ model Order {
 
   user        User         @relation(fields: [userId], references: [id])
   items       OrderItem[]  
+  // 🆕 NEW: Link to DiscountCode
+  discountCodeId Int?
+  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id])
 }
 
 model OrderItem {
