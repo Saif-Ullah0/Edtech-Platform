@@ -1,3 +1,9 @@
+// backend/src/routes/webhookRoutes.js - UPDATED
+// Changes:
+// - Updated to use metadata for originalAmount, discountAmount, finalAmount.
+// - Check for existing usage to prevent duplicates.
+// - Ensured transaction for atomicity.
+
 const express = require('express');
 const router = express.Router();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -25,12 +31,7 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    const userId = parseInt(session.metadata.userId);
-    const orderId = parseInt(session.metadata.orderId);
-    const courseId = parseInt(session.metadata.courseId);
-    const discountCode = session.metadata.discountCode; // NEW
-    const discountAmount = parseFloat(session.metadata.discountAmount || '0'); // NEW
-    const finalAmount = parseFloat(session.metadata.finalAmount); // NEW
+    const { userId, orderId, courseId, discountCode, discountAmount, finalAmount, originalAmount } = session.metadata;
 
     console.log('Metadata:', { userId, orderId, courseId, discountCode, discountAmount, finalAmount });
 
@@ -38,16 +39,16 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
       await prisma.$transaction(async (tx) => {
         // 1. Mark order as COMPLETED
         await tx.order.update({
-          where: { id: orderId },
+          where: { id: parseInt(orderId) },
           data: { status: 'COMPLETED' },
         });
 
-        // 2. Enroll user in the course
+        // 2. Enroll user in the course if not exists
         const existingEnrollment = await tx.enrollment.findUnique({
           where: {
             userId_courseId: {
-              userId,
-              courseId,
+              userId: parseInt(userId),
+              courseId: parseInt(courseId),
             },
           },
         });
@@ -55,8 +56,8 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
         if (!existingEnrollment) {
           await tx.enrollment.create({
             data: {
-              userId,
-              courseId,
+              userId: parseInt(userId),
+              courseId: parseInt(courseId),
               paymentTransactionId: session.id,
             },
           });
@@ -73,21 +74,27 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
             throw new Error('Invalid discount code in webhook');
           }
 
-          await tx.discountUsage.create({
-            data: {
-              discountCodeId: discount.id,
-              userId,
-              orderId,
-              originalAmount: finalAmount + discountAmount,
-              discountAmount,
-              finalAmount,
-            },
+          const existingUsage = await tx.discountUsage.findFirst({
+            where: { orderId: parseInt(orderId) }
           });
 
-          await tx.discountCode.update({
-            where: { id: discount.id },
-            data: { usedCount: { increment: 1 } },
-          });
+          if (!existingUsage) {
+            await tx.discountUsage.create({
+              data: {
+                discountCodeId: discount.id,
+                userId: parseInt(userId),
+                orderId: parseInt(orderId),
+                originalAmount: parseFloat(originalAmount),
+                discountAmount: parseFloat(discountAmount),
+                finalAmount: parseFloat(finalAmount),
+              },
+            });
+
+            await tx.discountCode.update({
+              where: { id: discount.id },
+              data: { usedCount: { increment: 1 } },
+            });
+          }
         }
 
         console.log(`Enrolled user ${userId} in course ${courseId}`);
@@ -102,5 +109,6 @@ router.post('/', bodyParser.raw({ type: 'application/json' }), async (req, res) 
 
   res.status(200).json({ received: true });
 });
+
 
 module.exports = router;
