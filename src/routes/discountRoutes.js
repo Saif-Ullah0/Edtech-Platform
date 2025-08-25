@@ -8,7 +8,7 @@ const {
   updateDiscountCode,
   deleteDiscountCode,
   getDiscountAnalytics,
-  getGeneralAnalytics, // 🆕 NEW: Added for general analytics
+  getGeneralAnalytics,
 } = require('../controllers/discountController');
 const requireAuth = require('../middlewares/requireAuth');
 const requireAdmin = require('../middlewares/requireAdmin');
@@ -25,6 +25,6 @@ router.get('/', getDiscountCodes);
 router.put('/:id', updateDiscountCode);
 router.delete('/:id', deleteDiscountCode);
 router.get('/analytics/:id', getDiscountAnalytics);
-router.get('/analytics', getGeneralAnalytics); // 🆕 NEW: Added route for general analytics
+router.get('/analytics', getGeneralAnalytics);
 
 module.exports = router;

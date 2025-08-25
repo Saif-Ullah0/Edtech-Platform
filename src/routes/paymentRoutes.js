@@ -1,9 +1,7 @@
-
-// ================================
-// UPDATED: backend/src/routes/paymentRoutes.js
-// ================================
-
-// Remove all bundle-related routes and keep only course payments:
+// backend/src/routes/paymentRoutes.js - UPDATED
+// Changes:
+// - No major changes needed; /checkout already exists and handles coupon via body.
+// - Kept as is, since createCheckoutSession now handles coupon.
 
 const express = require('express');
 const router = express.Router();
