@@ -1,26 +1,8 @@
-// backend/src/controllers/paymentController.js - UPDATED
-// Changes:
-// - Updated createCheckoutSession to handle couponCode from request body.
-// - Validate coupon if provided, calculate final amount.
-// - If final amount is 0, create enrollment immediately without Stripe, create DiscountUsage, increment usedCount.
-// - For paid, adjust unit_amount to final, set metadata with discount info, link discountCodeId to order.
-// - Added error handling for invalid coupons.
-// - In verifySession, added check for order status if enrollment not found, return pending if PENDING.
-// - Updated stripeWebhookHandler to handle free cases (though free skips webhook), and ensure no duplicate enrollments.
-// - Removed bundle-related code as per provided, but kept module if needed.
-// - Added production-ready error handling, logging.
+const { PrismaClient } = require('@prisma/client');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const prisma = new PrismaClient();
 
-const Stripe = require('stripe');
-const prisma = require('../../prisma/client');
-
-// Add timeout configuration to Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  timeout: 20000, // 20 seconds instead of 80 seconds
-  maxNetworkRetries: 3,
-  telemetry: false,
-});
-
-// Add connection test function
+// Test Stripe connection
 async function testStripeConnection() {
   try {
     console.log('🔗 Testing Stripe connection...');
@@ -33,7 +15,7 @@ async function testStripeConnection() {
   }
 }
 
-// Add health check endpoint
+// Health check endpoint
 const checkPaymentHealth = async (req, res) => {
   try {
     const isConnected = await testStripeConnection();
@@ -50,11 +32,370 @@ const checkPaymentHealth = async (req, res) => {
   }
 };
 
-// ================================
-// COURSE PAYMENT FUNCTIONS
-// ================================
+// Updated createCheckoutSession
+const createCheckoutSession = async (req, res) => {
+  try {
+    const { courseId, couponCode } = req.body;
+    const userId = req.user.id;
 
-// Fast direct enrollment (for immediate processing)
+    console.log(`🔄 Creating checkout session: User ${userId} → Course ${courseId} with coupon ${couponCode || 'none'}`);
+
+    // Validate course
+    const course = await prisma.course.findUnique({
+      where: { id: parseInt(courseId) },
+      select: { id: true, title: true, price: true, isPaid: true },
+    });
+
+    if (!course) {
+      console.log(`❌ Course ${courseId} not found`);
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    let finalAmount = course.price * 100; // Convert to cents
+    let discountCode = null;
+    let discountAmount = 0;
+
+    // Validate coupon if provided
+    if (couponCode) {
+      discountCode = await prisma.discountCode.findUnique({
+        where: { code: couponCode },
+      });
+
+      if (!discountCode || !discountCode.isActive) {
+        console.log(`❌ Invalid or inactive coupon: ${couponCode}`);
+        return res.status(400).json({ success: false, message: 'Invalid or inactive coupon' });
+      }
+
+      // Check coupon applicability
+      if (discountCode.applicableToType === 'COURSE' && discountCode.applicableToId !== parseInt(courseId)) {
+        console.log(`❌ Coupon ${couponCode} not applicable to course ${courseId}`);
+        return res.status(400).json({ success: false, message: 'Coupon not applicable to this course' });
+      }
+
+      // Check usage limits
+      const userUsageCount = await prisma.discountUsage.count({
+        where: { discountCodeId: discountCode.id, userId },
+      });
+
+      if (discountCode.maxUsesPerUser && userUsageCount >= discountCode.maxUsesPerUser) {
+        console.log(`❌ Coupon ${couponCode} usage limit exceeded for user ${userId}`);
+        return res.status(400).json({ success: false, message: 'Coupon usage limit exceeded' });
+      }
+
+      if (discountCode.maxUses && discountCode.usedCount >= discountCode.maxUses) {
+        console.log(`❌ Coupon ${couponCode} max uses reached`);
+        return res.status(400).json({ success: false, message: 'Coupon max uses reached' });
+      }
+
+      // Calculate discount
+      if (discountCode.type === 'PERCENTAGE') {
+        discountAmount = (finalAmount * discountCode.value) / 100;
+      } else if (discountCode.type === 'FIXED_AMOUNT') {
+        discountAmount = discountCode.value * 100;
+      }
+
+      if (discountCode.maxDiscountAmount && discountAmount > discountCode.maxDiscountAmount * 100) {
+        discountAmount = discountCode.maxDiscountAmount * 100;
+      }
+
+      finalAmount = Math.max(0, finalAmount - discountAmount);
+
+      console.log(`✅ Coupon ${couponCode} validated: Original=${course.price * 100}, Discount=${discountAmount}, Final=${finalAmount}`);
+    }
+
+    // If final amount is 0 (free course or fully discounted), enroll directly
+    if (finalAmount === 0 || !course.isPaid) {
+      const enrollment = await prisma.enrollment.create({
+        data: {
+          userId,
+          courseId: parseInt(courseId),
+          progress: 0,
+        },
+      });
+
+      if (discountCode) {
+        await prisma.discountUsage.create({
+          data: {
+            discountCodeId: discountCode.id,
+            userId,
+            originalAmount: course.price * 100,
+            discountAmount,
+            finalAmount,
+          },
+        });
+
+        await prisma.discountCode.update({
+          where: { id: discountCode.id },
+          data: { usedCount: { increment: 1 } },
+        });
+      }
+
+      console.log(`✅ Free course enrolled: User ${userId}, Course ${courseId}, Enrollment ${enrollment.id}`);
+      return res.json({
+        success: true,
+        message: 'Course enrolled successfully',
+        discountApplied: discountCode
+          ? {
+              couponCode,
+              originalAmount: course.price * 100,
+              discountAmount,
+              finalAmount,
+            }
+          : null,
+      });
+    }
+
+    // Create order for paid course
+    console.log(`🔄 Creating order: User ${userId}, Course ${courseId}, Total ${finalAmount / 100}, DiscountCode ${discountCode ? discountCode.id : 'none'}`);
+    const order = await prisma.order.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        totalAmount: finalAmount / 100, // Store in dollars
+        discountCodeId: discountCode ? discountCode.id : null,
+        items: {
+          create: [
+            {
+              courseId: parseInt(courseId),
+              price: course.price, // Store original price in dollars
+            },
+          ],
+        },
+      },
+    });
+
+    // Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: course.title,
+              metadata: { courseId: courseId.toString() },
+            },
+            unit_amount: Math.round(finalAmount), // In cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}&course_id=${courseId}&order_id=${order.id}`,
+      cancel_url: `${process.env.FRONTEND_URL}/checkout?courseId=${courseId}`,
+      metadata: {
+        type: 'course_purchase', // Added type metadata
+        userId: userId.toString(),
+        courseId: courseId.toString(),
+        orderId: order.id.toString(),
+        couponCode: couponCode || '',
+      },
+    });
+
+    // Record discount usage
+    if (discountCode) {
+      await prisma.discountUsage.create({
+        data: {
+          discountCodeId: discountCode.id,
+          userId,
+          orderId: order.id,
+          originalAmount: course.price * 100,
+          discountAmount,
+          finalAmount,
+        },
+      });
+
+      await prisma.discountCode.update({
+        where: { id: discountCode.id },
+        data: { usedCount: { increment: 1 } },
+      });
+    }
+
+    console.log(`✅ Checkout session created: ${session.id}, URL: ${session.url}`);
+    res.json({
+      success: true,
+      url: session.url,
+      sessionId: session.id,
+      orderId: order.id,
+      discountApplied: discountCode
+        ? {
+            couponCode,
+            originalAmount: course.price * 100,
+            discountAmount,
+            finalAmount,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('❌ Checkout session error:', error);
+    res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Failed to create checkout session' : error.message,
+    });
+  }
+};
+
+// Updated verifySession
+const verifySession = async (req, res) => {
+  const { sessionId, courseId, orderId } = req.body;
+  const userId = req.user?.userId;
+  
+  try {
+    console.log('🔍 Verifying payment session:', { sessionId, courseId, orderId, userId });
+
+    if (!sessionId || !userId) {
+      console.log('❌ Missing sessionId or userId');
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing session ID or user authentication' 
+      });
+    }
+
+    // Verify Stripe session
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== 'paid') {
+      console.log('❌ Payment not completed:', session.payment_status);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Payment not completed' 
+      });
+    }
+
+    // Log full metadata for debugging
+    console.log('📋 Session metadata:', session.metadata);
+
+    // Handle successful payment based on metadata type
+    const { type, courseId: metadataCourseId, orderId: metadataOrderId } = session.metadata;
+    
+    if (!type || type !== 'course_purchase') {
+      console.log('❌ Invalid or missing purchase type:', type);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Unsupported purchase type' 
+      });
+    }
+
+    // Validate courseId and orderId
+    if (courseId && parseInt(courseId) !== parseInt(metadataCourseId)) {
+      console.log('❌ Course ID mismatch:', { providedCourseId: courseId, metadataCourseId });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Course ID mismatch' 
+      });
+    }
+    if (orderId && parseInt(orderId) !== parseInt(metadataOrderId)) {
+      console.log('❌ Order ID mismatch:', { providedOrderId: orderId, metadataOrderId });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Order ID mismatch' 
+      });
+    }
+
+    // Fetch order details
+    const order = await prisma.order.findUnique({
+      where: { id: parseInt(orderId || metadataOrderId) },
+      include: {
+        items: {
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                price: true,
+                category: true,
+                instructor: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!order || order.userId !== userId) {
+      console.log('❌ Order not found or unauthorized:', { orderId: orderId || metadataOrderId, userId });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Order not found or unauthorized' 
+      });
+    }
+
+    // Check enrollment
+    const enrollment = await prisma.enrollment.findFirst({
+      where: { userId, courseId: parseInt(courseId || metadataCourseId) }
+    });
+
+    if (!enrollment) {
+      console.log('🆕 Creating enrollment for user:', userId, 'course:', courseId || metadataCourseId);
+      await prisma.enrollment.create({
+        data: {
+          userId,
+          courseId: parseInt(courseId || metadataCourseId),
+          progress: 0.0,
+          lastAccessed: new Date(),
+          paymentTransactionId: session.payment_intent
+        }
+      });
+    }
+
+    // Update order status if not already completed
+    if (order.status === 'PENDING') {
+      console.log('🔄 Updating order status to COMPLETED:', order.id);
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'COMPLETED' }
+      });
+    }
+
+    if (order.status !== 'COMPLETED') {
+      console.log('❌ Order not completed:', order.status);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Order not completed' 
+      });
+    }
+
+    console.log('✅ Payment verified successfully:', { orderId: order.id, sessionId });
+
+    res.json({
+      success: true,
+      message: 'Payment verified and enrollment completed',
+      order: {
+        id: order.id,
+        userId: order.userId,
+        status: order.status,
+        totalAmount: order.totalAmount,
+        createdAt: order.createdAt.toISOString(),
+        items: order.items.map(item => ({
+          id: item.id,
+          courseId: item.courseId,
+          price: item.price,
+          course: item.course ? {
+            id: item.course.id,
+            title: item.course.title,
+            description: item.course.description,
+            price: item.course.price,
+            category: item.course.category,
+            instructor: item.course.instructor
+          } : undefined
+        }))
+      },
+      transactionId: session.payment_intent,
+      amount: order.totalAmount,
+      currency: session.currency?.toUpperCase() || 'USD'
+    });
+
+  } catch (error) {
+    console.error('❌ Error verifying session:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to verify payment',
+      details: error.message
+    });
+  }
+};
+
+// Other functions (unchanged)
 const fastEnrollment = async (req, res) => {
   const { courseId, paymentMethodId } = req.body;
   const userId = req.user?.userId;
@@ -65,7 +406,6 @@ const fastEnrollment = async (req, res) => {
   }
   
   try {
-    // Test Stripe connection first for paid courses
     if (paymentMethodId) {
       const isConnected = await testStripeConnection();
       if (!isConnected) {
@@ -75,7 +415,6 @@ const fastEnrollment = async (req, res) => {
       }
     }
 
-    // Get course details
     const course = await prisma.course.findUnique({
       where: { id: courseId },
     });
@@ -85,7 +424,6 @@ const fastEnrollment = async (req, res) => {
       return res.status(400).json({ error: 'Course not found' });
     }
     
-    // Check if already enrolled
     const existingEnrollment = await prisma.enrollment.findFirst({
       where: { userId, courseId }
     });
@@ -102,7 +440,6 @@ const fastEnrollment = async (req, res) => {
     
     console.log(`📚 Course: ${course.title} - Price: $${course.price} USD`);
     
-    // Handle free courses immediately
     if (course.price === 0) {
       const enrollment = await prisma.enrollment.create({
         data: {
@@ -126,18 +463,15 @@ const fastEnrollment = async (req, res) => {
       });
     }
     
-    // Handle paid courses
     if (!paymentMethodId) {
       return res.status(400).json({ 
         error: 'Payment method required for paid course' 
       });
     }
     
-    // Process payment directly with timeout protection
     const amountInCents = Math.round(course.price * 100);
     console.log(`💳 Processing payment: $${course.price} USD (${amountInCents} cents)`);
     
-    // Create payment intent with timeout race
     const paymentPromise = stripe.paymentIntents.create({
       amount: amountInCents,
       currency: 'usd',
@@ -163,7 +497,6 @@ const fastEnrollment = async (req, res) => {
     console.log(`💰 Payment intent: ${paymentIntent.id} - Status: ${paymentIntent.status}`);
     
     if (paymentIntent.status === 'succeeded') {
-      // Payment successful - create enrollment immediately
       const enrollment = await prisma.enrollment.create({
         data: {
           userId,
@@ -189,7 +522,6 @@ const fastEnrollment = async (req, res) => {
         redirectUrl: `/courses/${courseId}/modules`
       });
     } else if (paymentIntent.status === 'requires_action') {
-      // 3D Secure or other authentication required
       return res.json({
         requiresAction: true,
         paymentIntent: {
@@ -231,13 +563,11 @@ const fastEnrollment = async (req, res) => {
   }
 };
 
-// Create Payment Intent (for frontend to confirm)
 const createPaymentIntent = async (req, res) => {
   const { courseId } = req.body;
   const userId = req.user?.userId;
   
   try {
-    // Test Stripe connection first
     const isConnected = await testStripeConnection();
     if (!isConnected) {
       return res.status(503).json({ 
@@ -257,7 +587,6 @@ const createPaymentIntent = async (req, res) => {
       return res.status(400).json({ error: 'Cannot create payment intent for free course' });
     }
     
-    // Check if already enrolled
     const existingEnrollment = await prisma.enrollment.findFirst({
       where: { userId, courseId }
     });
@@ -272,7 +601,6 @@ const createPaymentIntent = async (req, res) => {
     const amountInCents = Math.round(course.price * 100);
     console.log(`🔄 Creating payment intent: $${course.price} USD (${amountInCents} cents)`);
     
-    // Create payment intent with timeout protection
     const paymentPromise = stripe.paymentIntents.create({
       amount: amountInCents,
       currency: 'usd',
@@ -315,13 +643,11 @@ const createPaymentIntent = async (req, res) => {
   }
 };
 
-// Confirm enrollment after payment
 const confirmEnrollment = async (req, res) => {
   const { paymentIntentId, courseId } = req.body;
   const userId = req.user?.userId;
   
   try {
-    // Verify payment intent with timeout
     const verifyPromise = stripe.paymentIntents.retrieve(paymentIntentId);
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Payment verification timeout')), 10000);
@@ -338,7 +664,6 @@ const confirmEnrollment = async (req, res) => {
     
     console.log(`✅ Payment confirmed: ${paymentIntentId}`);
     
-    // Check if already enrolled
     const existingEnrollment = await prisma.enrollment.findFirst({
       where: { userId, courseId }
     });
@@ -352,7 +677,6 @@ const confirmEnrollment = async (req, res) => {
       });
     }
     
-    // Create enrollment
     const enrollment = await prisma.enrollment.create({
       data: {
         userId,
@@ -387,266 +711,6 @@ const confirmEnrollment = async (req, res) => {
   }
 };
 
-// Updated createCheckoutSession with coupon handling
-// backend/src/controllers/paymentController.js
-// Only showing updated createCheckoutSession; other functions unchanged
-
-const createCheckoutSession = async (req, res) => {
-  const { courseId, couponCode } = req.body;
-  const userId = req.user?.userId;
-
-  console.log(`🔄 Creating checkout session: User ${userId} → Course ${courseId} with coupon ${couponCode || 'none'}`);
-
-  if (!courseId) {
-    console.error('❌ Missing courseId');
-    return res.status(400).json({ error: 'Missing courseId' });
-  }
-
-  try {
-    // Test Stripe connection first
-    const isConnected = await testStripeConnection();
-    if (!isConnected) {
-      console.error('❌ Stripe connection failed');
-      return res.status(503).json({
-        error: 'We are experiencing issues connecting to our payments provider. Please check your internet connection and try again.',
-      });
-    }
-
-    const course = await prisma.course.findUnique({
-      where: { id: courseId },
-    });
-
-    if (!course) {
-      console.error(`❌ Course ${courseId} not found`);
-      return res.status(400).json({ error: 'Course not found' });
-    }
-
-    // Check if already enrolled
-    const existingEnrollment = await prisma.enrollment.findFirst({
-      where: { userId, courseId },
-    });
-
-    if (existingEnrollment) {
-      console.log(`⚠️ User ${userId} already enrolled`);
-      return res.status(400).json({
-        error: 'Already enrolled in this course',
-        enrolled: true,
-        redirectUrl: `/courses/${courseId}/modules`,
-      });
-    }
-
-    let finalAmount = course.price;
-    let discountAmount = 0;
-    let discountId = null;
-    let originalAmount = course.price;
-    let appliedCoupon = null;
-
-    // Validate coupon if provided
-    if (couponCode) {
-      const discount = await prisma.discountCode.findUnique({
-        where: { code: couponCode.toUpperCase() },
-      });
-
-      if (!discount || !discount.isActive) {
-        console.error(`❌ Invalid or inactive coupon: ${couponCode}`);
-        return res.status(400).json({ error: 'Invalid or inactive coupon' });
-      }
-
-      const now = new Date();
-      if (discount.expiresAt && discount.expiresAt < now) {
-        console.error(`❌ Coupon expired: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon expired' });
-      }
-
-      if (discount.startsAt && discount.startsAt > now) {
-        console.error(`❌ Coupon not yet active: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon not yet active' });
-      }
-
-      if (discount.maxUses && discount.usedCount >= discount.maxUses) {
-        console.error(`❌ Coupon usage limit reached: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon usage limit reached' });
-      }
-
-      const userUsages = await prisma.discountUsage.count({
-        where: { discountCodeId: discount.id, userId },
-      });
-      if (discount.maxUsesPerUser && userUsages >= discount.maxUsesPerUser) {
-        console.error(`❌ Coupon usage limit per user reached: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon usage limit per user reached' });
-      }
-
-      if (discount.minPurchaseAmount && course.price < discount.minPurchaseAmount) {
-        console.error(`❌ Minimum purchase amount not met: ${couponCode}`);
-        return res.status(400).json({ error: 'Minimum purchase amount not met' });
-      }
-
-      // Check applicability
-      if (discount.applicableToType === 'COURSE' && discount.applicableToId !== courseId) {
-        console.error(`❌ Coupon not applicable to course: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon not applicable to this course' });
-      } else if (discount.applicableToType === 'CATEGORY' && discount.applicableToId !== course.categoryId) {
-        console.error(`❌ Coupon not applicable to category: ${couponCode}`);
-        return res.status(400).json({ error: 'Coupon not applicable to this course category' });
-      }
-
-      // Calculate discount
-      if (discount.type === 'PERCENTAGE') {
-        discountAmount = (course.price * discount.value) / 100;
-        if (discount.maxDiscountAmount && discountAmount > discount.maxDiscountAmount) {
-          discountAmount = discount.maxDiscountAmount;
-        }
-      } else {
-        discountAmount = discount.value;
-      }
-
-      finalAmount = Math.max(0, course.price - discountAmount);
-      discountId = discount.id;
-      appliedCoupon = discount.code;
-    }
-
-    // Handle free courses or free after discount
-    if (finalAmount === 0) {
-      const order = await prisma.order.create({
-        data: {
-          userId,
-          status: 'COMPLETED',
-          totalAmount: finalAmount,
-          discountCodeId: discountId,
-          items: {
-            create: [{ courseId: course.id, price: originalAmount }],
-          },
-        },
-      });
-
-      const enrollment = await prisma.enrollment.create({
-        data: {
-          userId,
-          courseId,
-          progress: 0.0,
-          lastAccessed: new Date(),
-        },
-      });
-
-      if (discountId) {
-        await prisma.$transaction(async (tx) => {
-          await tx.discountUsage.create({
-            data: {
-              discountCodeId: discountId,
-              userId,
-              orderId: order.id,
-              originalAmount,
-              discountAmount,
-              finalAmount,
-            },
-          });
-
-          await tx.discountCode.update({
-            where: { id: discountId },
-            data: { usedCount: { increment: 1 } },
-          });
-        });
-      }
-
-      console.log(`✅ Free enrollment completed: User ${userId} → Course ${courseId}`);
-      return res.json({
-        success: true,
-        enrollment,
-        redirectUrl: `${process.env.FRONTEND_URL}/courses/${courseId}/modules`,
-        discountApplied: appliedCoupon ? { code: appliedCoupon, discountAmount, finalAmount, originalAmount } : null,
-      });
-    }
-
-    const amountInCents = Math.round(finalAmount * 100);
-    console.log(`💰 Checkout: $${finalAmount} USD (${amountInCents} cents)`);
-
-    // Create order with discount
-    const order = await prisma.order.create({
-      data: {
-        userId,
-        status: 'PENDING',
-        totalAmount: finalAmount,
-        discountCodeId: discountId,
-        items: {
-          create: [{ courseId: course.id, price: originalAmount }],
-        },
-      },
-    });
-
-    // Create Stripe session
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: course.title,
-              description: course.description || `Course: ${course.title}`,
-            },
-            unit_amount: amountInCents,
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}&course_id=${courseId}&order_id=${order.id}`,
-      cancel_url: `${process.env.FRONTEND_URL}/courses/${courseId}`,
-      metadata: {
-        type: 'course_purchase',
-        orderId: order.id.toString(),
-        userId: userId.toString(),
-        courseId: courseId.toString(),
-        priceUSD: finalAmount.toString(),
-        discountCode: appliedCoupon || '',
-        discountAmount: discountAmount.toString(),
-        finalAmount: finalAmount.toString(),
-        originalAmount: originalAmount.toString(),
-      },
-    });
-
-    console.log(`✅ Checkout session created: ${session.id}`);
-
-    res.json({
-      success: true,
-      url: session.url,
-      sessionId: session.id,
-      amount: finalAmount,
-      currency: 'USD',
-      orderId: order.id,
-      discountApplied: appliedCoupon ? { code: appliedCoupon, discountAmount, finalAmount, originalAmount } : null,
-    });
-  } catch (error) {
-    console.error('❌ Checkout session error:', error);
-
-    if (error.message === 'Checkout session creation timeout') {
-      return res.status(503).json({
-        error: 'We are experiencing issues connecting to our payments provider. Please check your internet connection and try again.',
-      });
-    }
-
-    if (error.type === 'StripeConnectionError') {
-      return res.status(503).json({
-        error: 'We are experiencing issues connecting to our payments provider. Please check your internet connection and try again.',
-      });
-    }
-
-    if (error.type === 'StripeAuthenticationError') {
-      console.error('❌ Stripe API Key Error - Check your STRIPE_SECRET_KEY');
-      return res.status(500).json({
-        error: 'Payment configuration error. Please contact support.',
-      });
-    }
-
-    res.status(500).json({ error: 'Failed to create checkout session', details: error.message });
-  }
-};
-
-// ================================
-// MODULE PAYMENT FUNCTIONS
-// ================================
-
-// Get module with pricing info
 const getModuleDetails = async (req, res) => {
   try {
     const { moduleId } = req.params;
@@ -665,7 +729,6 @@ const getModuleDetails = async (req, res) => {
       return res.status(404).json({ error: 'Module not found' });
     }
 
-    // Check if user already owns this module
     const existingEnrollment = await prisma.moduleEnrollment.findUnique({
       where: {
         userId_moduleId: {
@@ -687,13 +750,11 @@ const getModuleDetails = async (req, res) => {
   }
 };
 
-// Purchase individual module
 const purchaseModule = async (req, res) => {
   try {
     const { moduleId } = req.body;
     const userId = req.user?.userId;
 
-    // Get module details
     const module = await prisma.module.findUnique({
       where: { id: moduleId },
       include: { course: true }
@@ -703,7 +764,6 @@ const purchaseModule = async (req, res) => {
       return res.status(404).json({ error: 'Module not found' });
     }
 
-    // Check if already enrolled
     const existingEnrollment = await prisma.moduleEnrollment.findUnique({
       where: {
         userId_moduleId: { userId, moduleId }
@@ -714,7 +774,6 @@ const purchaseModule = async (req, res) => {
       return res.status(400).json({ error: 'Module already purchased' });
     }
 
-    // Handle free modules
     if (module.isFree || module.price === 0) {
       const enrollment = await prisma.moduleEnrollment.create({
         data: {
@@ -732,7 +791,6 @@ const purchaseModule = async (req, res) => {
       });
     }
 
-    // Create Stripe checkout for paid module
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
@@ -769,7 +827,6 @@ const purchaseModule = async (req, res) => {
   }
 };
 
-// Get user's module enrollments
 const getUserModules = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -796,92 +853,6 @@ const getUserModules = async (req, res) => {
   }
 };
 
-// ================================
-// WEBHOOK & VERIFICATION
-// ================================
-
-// Updated verifySession with handling for pending webhook
-const verifySession = async (req, res) => {
-  const { sessionId } = req.body;
-  const userId = req.user?.userId;
-  
-  try {
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-    
-    if (session.payment_status !== 'paid') {
-      return res.status(400).json({ 
-        error: 'Payment not completed' 
-      });
-    }
-
-    // Handle successful payment based on metadata type
-    const { type, courseId, orderId } = session.metadata;
-      
-    if (type === 'course_purchase') {
-      // Check enrollment
-      const enrollment = await prisma.enrollment.findFirst({
-        where: { userId, courseId: parseInt(courseId) }
-      });
-        
-      if (enrollment) {
-        return res.json({ 
-          success: true,
-          message: 'Payment verified and enrollment completed' 
-        });
-      }
-
-      // If not found, check order status
-      if (orderId) {
-        const order = await prisma.order.findUnique({
-          where: { id: parseInt(orderId) }
-        });
-
-        if (order?.status === 'COMPLETED') {
-          // Webhook already processed
-          return res.json({ 
-            success: true,
-            message: 'Payment verified and enrollment completed' 
-          });
-        } else if (order?.status === 'PENDING') {
-          // Webhook not yet processed
-          return res.status(202).json({ 
-            pending: true,
-            message: 'Payment processing, please wait...' 
-          });
-        }
-      }
-
-      // If no enrollment and order not completed, create as fallback
-      await prisma.enrollment.create({
-        data: {
-          userId,
-          courseId: parseInt(courseId),
-          progress: 0.0,
-          lastAccessed: new Date(),
-          paymentTransactionId: session.payment_intent
-        }
-      });
-        
-      // Update order status
-      if (orderId) {
-        await prisma.order.update({
-          where: { id: parseInt(orderId) },
-          data: { status: 'COMPLETED' }
-        });
-      }
-    }
-    
-    res.json({ 
-      success: true, 
-      message: 'Payment verified and enrollment completed' 
-    });
-  } catch (error) {
-    console.error('Error verifying session:', error);
-    res.status(500).json({ error: 'Failed to verify payment' });
-  }
-};
-
-// Updated webhook handler
 const stripeWebhookHandler = async (req, res) => {
   const sig = req.headers['stripe-signature'];
   
@@ -896,9 +867,8 @@ const stripeWebhookHandler = async (req, res) => {
       console.log(`💰 Processing ${type} purchase for user ${userId}`);
       
       if (type === 'bundle_purchase') {
-        // Handle bundle if needed (skipped as per removal)
+        // Handle bundle if needed
       } else if (type === 'module_purchase') {
-        // Handle module
         const existing = await prisma.moduleEnrollment.findUnique({
           where: { userId_moduleId: { userId: parseInt(userId), moduleId: parseInt(moduleId) } }
         });
@@ -918,7 +888,6 @@ const stripeWebhookHandler = async (req, res) => {
         console.log(`✅ Module ${moduleId} purchased by user ${userId}`);
         
       } else if (type === 'course_purchase') {
-        // Handle course purchase
         const existingEnrollment = await prisma.enrollment.findFirst({
           where: { userId: parseInt(userId), courseId: parseInt(courseId) }
         });
@@ -937,7 +906,6 @@ const stripeWebhookHandler = async (req, res) => {
           console.log(`✅ Course ${courseId} purchased by user ${userId}`);
         }
         
-        // Update order status
         if (orderId) {
           await prisma.order.update({
             where: { id: parseInt(orderId) },
@@ -945,7 +913,6 @@ const stripeWebhookHandler = async (req, res) => {
           });
         }
 
-        // Handle discount if applied
         if (discountCode) {
           const discount = await prisma.discountCode.findUnique({
             where: { code: discountCode },
@@ -985,8 +952,50 @@ const stripeWebhookHandler = async (req, res) => {
   }
 };
 
+const getOrderDetails = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: parseInt(id) },
+      include: {
+        items: {
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                description: true,
+                price: true,
+                category: true,
+                instructor: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    if (order.userId !== userId) {
+      return res.status(403).json({ success: false, message: 'Unauthorized access to order' });
+    }
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error('Error fetching order details:', error);
+    res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Failed to fetch order details' : error.message,
+    });
+  }
+};
+
 module.exports = { 
-  // Course payment functions
   fastEnrollment,
   createPaymentIntent,
   confirmEnrollment,
@@ -994,9 +1003,8 @@ module.exports = {
   verifySession,
   stripeWebhookHandler,
   checkPaymentHealth,
-  
-  // Module payment functions
   getModuleDetails,
   purchaseModule,
-  getUserModules
+  getUserModules,
+  getOrderDetails
 };
