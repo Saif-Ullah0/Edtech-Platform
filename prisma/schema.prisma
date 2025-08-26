@@ -563,15 +563,13 @@ model ModuleProgress {
 }
 
 model Order {
-  id          Int          @id @default(autoincrement())
-  userId      Int
-  status      OrderStatus  @default(PENDING)
-  totalAmount Float
-  createdAt   DateTime     @default(now())
-
-  user        User         @relation(fields: [userId], references: [id])
-  items       OrderItem[]  
-  // 🆕 NEW: Link to DiscountCode
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  status         OrderStatus  @default(PENDING)
+  totalAmount    Float
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id])
+  items          OrderItem[]
   discountCodeId Int?
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id])
 }
