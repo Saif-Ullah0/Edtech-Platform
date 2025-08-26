@@ -1,8 +1,4 @@
 // backend/src/routes/webhookRoutes.js - UPDATED
-// Changes:
-// - Updated to use metadata for originalAmount, discountAmount, finalAmount.
-// - Check for existing usage to prevent duplicates.
-// - Ensured transaction for atomicity.
 
 const express = require('express');
 const router = express.Router();
