@@ -497,12 +497,11 @@ const purchaseCourse = async (req, res) => {
     const { courseId, discountCode } = req.body;
 
     if (!courseId || isNaN(parseInt(courseId))) {
-      return res.status(400).json({ error: 'Valid course ID is required' });
+      return res.status(400).json({ success: false, message: 'Valid course ID is required' });
     }
 
     const parsedCourseId = parseInt(courseId);
 
-    // Get course details
     const course = await prisma.course.findUnique({
       where: { id: parsedCourseId },
       select: {
@@ -515,14 +514,13 @@ const purchaseCourse = async (req, res) => {
     });
 
     if (!course || course.isDeleted || course.publishStatus !== 'PUBLISHED') {
-      return res.status(404).json({ error: 'Course not found or not available' });
+      return res.status(404).json({ success: false, message: 'Course not found or not available' });
     }
 
     if (course.price === 0) {
-      return res.status(400).json({ error: 'This is a free course. Use the enroll endpoint instead.' });
+      return res.status(400).json({ success: false, message: 'This is a free course. Use the enroll endpoint instead.' });
     }
 
-    // Check if already enrolled
     const existingEnrollment = await prisma.enrollment.findUnique({
       where: {
         userId_courseId: {
@@ -533,7 +531,11 @@ const purchaseCourse = async (req, res) => {
     });
 
     if (existingEnrollment) {
-      return res.status(400).json({ error: 'Already enrolled in this course' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Already enrolled in this course',
+        redirectUrl: `/courses/${parsedCourseId}/modules`
+      });
     }
 
     let originalAmount = course.price;
@@ -541,46 +543,42 @@ const purchaseCourse = async (req, res) => {
     let finalAmount = originalAmount;
     let appliedDiscountCode = null;
 
-    // Validate discount code if provided
     if (discountCode) {
       const discount = await prisma.discountCode.findUnique({
         where: { code: discountCode.toUpperCase() },
         include: {
-          usages: {
-            where: { userId },
-          },
+          usages: { where: { userId } },
         },
       });
 
       if (!discount || !discount.isActive) {
-        return res.status(400).json({ error: 'Invalid or inactive discount code' });
+        return res.status(400).json({ success: false, message: 'Invalid or inactive discount code' });
       }
 
       if (discount.expiresAt && new Date() > discount.expiresAt) {
-        return res.status(400).json({ error: 'This discount code has expired' });
+        return res.status(400).json({ success: false, message: 'This discount code has expired' });
       }
 
       if (discount.startsAt && new Date() < discount.startsAt) {
-        return res.status(400).json({ error: 'This discount code is not yet active' });
+        return res.status(400).json({ success: false, message: 'This discount code is not yet active' });
       }
 
       if (discount.maxUses && discount.usedCount >= discount.maxUses) {
-        return res.status(400).json({ error: 'This discount code has reached its usage limit' });
+        return res.status(400).json({ success: false, message: 'This discount code has reached its usage limit' });
       }
 
       if (discount.maxUsesPerUser && discount.usages.length >= discount.maxUsesPerUser) {
-        return res.status(400).json({ error: 'You have already used this discount code' });
+        return res.status(400).json({ success: false, message: 'You have already used this discount code' });
       }
 
       if (discount.minPurchaseAmount && originalAmount < discount.minPurchaseAmount) {
-        return res.status(400).json({ error: `Minimum purchase amount of $${discount.minPurchaseAmount} required` });
+        return res.status(400).json({ success: false, message: `Minimum purchase amount of $${discount.minPurchaseAmount} required` });
       }
 
       if (discount.applicableToType !== 'ALL' && discount.applicableToType !== 'COURSE') {
-        return res.status(400).json({ error: 'This discount code is not applicable to courses' });
+        return res.status(400).json({ success: false, message: 'This discount code is not applicable to courses' });
       }
 
-      // Calculate discount
       if (discount.type === 'PERCENTAGE') {
         discountAmount = (originalAmount * discount.value) / 100;
         if (discount.maxDiscountAmount && discountAmount > discount.maxDiscountAmount) {
@@ -594,7 +592,6 @@ const purchaseCourse = async (req, res) => {
       appliedDiscountCode = discount;
     }
 
-    // Create order
     const order = await prisma.order.create({
       data: {
         userId,
@@ -603,7 +600,6 @@ const purchaseCourse = async (req, res) => {
       },
     });
 
-    // Create order item
     await prisma.orderItem.create({
       data: {
         orderId: order.id,
@@ -612,7 +608,6 @@ const purchaseCourse = async (req, res) => {
       },
     });
 
-    // Handle 100% discount (free enrollment)
     if (finalAmount === 0) {
       const enrollment = await prisma.$transaction(async (tx) => {
         const newEnrollment = await tx.enrollment.create({
@@ -647,7 +642,6 @@ const purchaseCourse = async (req, res) => {
           });
         }
 
-        // Update order status to COMPLETED
         await tx.order.update({
           where: { id: order.id },
           data: { status: 'COMPLETED' },
@@ -657,25 +651,26 @@ const purchaseCourse = async (req, res) => {
       });
 
       return res.status(201).json({
-        message: 'Course enrolled for free due to discount',
+        success: true,
         enrollment: {
           id: enrollment.id,
           courseId: enrollment.courseId,
           courseName: enrollment.course.title,
           purchasedAt: enrollment.createdAt,
           transactionId: enrollment.paymentTransactionId,
+          redirectUrl: `/courses/${parsedCourseId}/modules`,
           discountApplied: appliedDiscountCode
             ? {
                 code: appliedDiscountCode.code,
                 discountAmount: Number(discountAmount.toFixed(2)),
                 finalAmount: Number(finalAmount.toFixed(2)),
+                originalAmount: Number(originalAmount.toFixed(2)),
               }
             : null,
         },
       });
     }
 
-    // Create Stripe checkout session for paid enrollment
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
@@ -686,14 +681,14 @@ const purchaseCourse = async (req, res) => {
               name: course.title,
               metadata: { courseId: parsedCourseId },
             },
-            unit_amount: Math.round(finalAmount * 100), // Stripe expects cents
+            unit_amount: Math.round(finalAmount * 100),
           },
           quantity: 1,
         },
       ],
       mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+      success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}&course_id=${parsedCourseId}`,
+      cancel_url: `${process.env.FRONTEND_URL}/courses/${parsedCourseId}`,
       metadata: {
         userId: userId.toString(),
         orderId: order.id.toString(),
@@ -705,21 +700,409 @@ const purchaseCourse = async (req, res) => {
     });
 
     res.status(200).json({
-      message: 'Checkout session created successfully',
+      success: true,
       sessionId: session.id,
+      url: session.url,
       orderId: order.id,
       discountApplied: appliedDiscountCode
         ? {
             code: appliedDiscountCode.code,
             discountAmount: Number(discountAmount.toFixed(2)),
             finalAmount: Number(finalAmount.toFixed(2)),
+            originalAmount: Number(originalAmount.toFixed(2)),
           }
         : null,
     });
   } catch (error) {
     console.error('Error purchasing course:', error);
     res.status(500).json({
-      error: 'Failed to purchase course',
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
+    });
+  }
+};
+
+// NEW: Get bundles
+const getBundles = async (req, res) => {
+  try {
+    const { type } = req.query;
+    const bundles = await prisma.bundle.findMany({
+      where: { 
+        type: type || 'COURSE',
+        isActive: true 
+      },
+      include: { 
+        courseItems: { 
+          include: { 
+            course: { 
+              select: { id: true, title: true, price: true, imageUrl: true } 
+            } 
+          } 
+        } 
+      }
+    });
+
+    const transformedBundles = bundles.map(bundle => ({
+      id: bundle.id,
+      name: bundle.name,
+      description: bundle.description,
+      type: bundle.type,
+      finalPrice: bundle.finalPrice,
+      totalPrice: bundle.totalPrice,
+      discount: bundle.discount,
+      savings: bundle.totalPrice - bundle.finalPrice,
+      savingsPercentage: Math.round(((bundle.totalPrice - bundle.finalPrice) / bundle.totalPrice) * 100),
+      isFeatured: bundle.isFeatured,
+      isPopular: bundle.isPopular,
+      totalItems: bundle.courseItems.length,
+      courseItems: bundle.courseItems.map(item => ({
+        course: {
+          id: item.course.id,
+          title: item.course.title,
+          price: item.course.price,
+          imageUrl: item.course.imageUrl
+        }
+      }))
+    }));
+
+    res.json({ success: true, bundles: transformedBundles });
+  } catch (error) {
+    console.error('Error fetching bundles:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bundles' });
+  }
+};
+
+// NEW: Check enrollment
+const checkEnrollment = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const courseId = parseInt(req.params.courseId);
+
+    if (isNaN(courseId)) {
+      return res.status(400).json({ success: false, message: 'Valid course ID is required' });
+    }
+
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId,
+          courseId,
+        },
+      },
+      select: {
+        id: true,
+        progress: true,
+        lastAccessed: true,
+        enrolledAt: true,
+        completed: true,
+      },
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Not enrolled' });
+    }
+
+    res.json({ success: true, enrollment });
+  } catch (error) {
+    console.error('Error checking enrollment:', error);
+    res.status(500).json({ success: false, message: 'Failed to check enrollment' });
+  }
+};
+
+// NEW: Enroll in free course
+const enrollFreeCourse = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { courseId } = req.body;
+
+    if (!courseId || isNaN(parseInt(courseId))) {
+      return res.status(400).json({ success: false, message: 'Valid course ID is required' });
+    }
+
+    const parsedCourseId = parseInt(courseId);
+
+    const course = await prisma.course.findUnique({
+      where: { id: parsedCourseId },
+      select: { id: true, price: true, publishStatus: true, isDeleted: true },
+    });
+
+    if (!course || course.isDeleted || course.publishStatus !== 'PUBLISHED') {
+      return res.status(404).json({ success: false, message: 'Course not found or not available' });
+    }
+
+    if (course.price > 0) {
+      return res.status(400).json({ success: false, message: 'This is a paid course. Use the purchase endpoint instead.' });
+    }
+
+    const existingEnrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId,
+          courseId: parsedCourseId,
+        },
+      },
+    });
+
+    if (existingEnrollment) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Already enrolled in this course',
+        redirectUrl: `/courses/${parsedCourseId}/modules`
+      });
+    }
+
+    const enrollment = await prisma.enrollment.create({
+      data: {
+        userId,
+        courseId: parsedCourseId,
+        progress: 0,
+        enrolledAt: new Date(),
+        lastAccessed: new Date(),
+        paymentTransactionId: `free_${Date.now()}_${userId}_${parsedCourseId}`,
+      },
+      include: {
+        course: { select: { id: true, title: true } },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      enrollment: {
+        id: enrollment.id,
+        courseId: enrollment.courseId,
+        courseName: enrollment.course.title,
+        enrolledAt: enrollment.enrolledAt,
+        transactionId: enrollment.paymentTransactionId,
+        redirectUrl: `/courses/${parsedCourseId}/modules`
+      },
+    });
+  } catch (error) {
+    console.error('Error enrolling in free course:', error);
+    res.status(500).json({ success: false, message: 'Failed to enroll' });
+  }
+};
+
+// NEW: Purchase bundle
+const purchaseBundle = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { bundleId, discountCode } = req.body;
+
+    if (!bundleId || isNaN(parseInt(bundleId))) {
+      return res.status(400).json({ success: false, message: 'Valid bundle ID is required' });
+    }
+
+    const parsedBundleId = parseInt(bundleId);
+
+    const bundle = await prisma.bundle.findUnique({
+      where: { id: parsedBundleId },
+      include: {
+        courseItems: { include: { course: true } },
+      },
+    });
+
+    if (!bundle || !bundle.isActive) {
+      return res.status(404).json({ success: false, message: 'Bundle not found or not available' });
+    }
+
+    const existingEnrollments = await prisma.enrollment.findMany({
+      where: {
+        userId,
+        courseId: { in: bundle.courseItems.map(item => item.course.id) },
+      },
+    });
+
+    if (existingEnrollments.length === bundle.courseItems.length) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'You already own all courses in this bundle',
+        redirectUrl: '/my-courses'
+      });
+    }
+
+    let originalAmount = bundle.finalPrice;
+    let discountAmount = 0;
+    let finalAmount = originalAmount;
+    let appliedDiscountCode = null;
+
+    if (discountCode) {
+      const discount = await prisma.discountCode.findUnique({
+        where: { code: discountCode.toUpperCase() },
+        include: {
+          usages: { where: { userId } },
+        },
+      });
+
+      if (!discount || !discount.isActive) {
+        return res.status(400).json({ success: false, message: 'Invalid or inactive discount code' });
+      }
+
+      if (discount.expiresAt && new Date() > discount.expiresAt) {
+        return res.status(400).json({ success: false, message: 'This discount code has expired' });
+      }
+
+      if (discount.startsAt && new Date() < discount.startsAt) {
+        return res.status(400).json({ success: false, message: 'This discount code is not yet active' });
+      }
+
+      if (discount.maxUses && discount.usedCount >= discount.maxUses) {
+        return res.status(400).json({ success: false, message: 'This discount code has reached its usage limit' });
+      }
+
+      if (discount.maxUsesPerUser && discount.usages.length >= discount.maxUsesPerUser) {
+        return res.status(400).json({ success: false, message: 'You have already used this discount code' });
+      }
+
+      if (discount.minPurchaseAmount && originalAmount < discount.minPurchaseAmount) {
+        return res.status(400).json({ success: false, message: `Minimum purchase amount of $${discount.minPurchaseAmount} required` });
+      }
+
+      if (discount.applicableToType !== 'ALL' && discount.applicableToType !== 'BUNDLE') {
+        return res.status(400).json({ success: false, message: 'This discount code is not applicable to bundles' });
+      }
+
+      if (discount.type === 'PERCENTAGE') {
+        discountAmount = (originalAmount * discount.value) / 100;
+        if (discount.maxDiscountAmount && discountAmount > discount.maxDiscountAmount) {
+          discountAmount = discount.maxDiscountAmount;
+        }
+      } else {
+        discountAmount = Math.min(discount.value, originalAmount);
+      }
+
+      finalAmount = Math.max(0, originalAmount - discountAmount);
+      appliedDiscountCode = discount;
+    }
+
+    const order = await prisma.order.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        totalAmount: finalAmount,
+      },
+    });
+
+    await prisma.orderItem.create({
+      data: {
+        orderId: order.id,
+        bundleId: parsedBundleId,
+        price: finalAmount,
+      },
+    });
+
+    if (finalAmount === 0) {
+      const enrollments = await prisma.$transaction(async (tx) => {
+        const newEnrollments = await Promise.all(
+          bundle.courseItems.map(item =>
+            tx.enrollment.create({
+              data: {
+                userId,
+                courseId: item.course.id,
+                progress: 0,
+                enrolledAt: new Date(),
+                lastAccessed: new Date(),
+                paymentTransactionId: `free_bundle_${Date.now()}_${userId}_${parsedBundleId}`,
+              },
+              include: {
+                course: { select: { id: true, title: true } },
+              },
+            })
+          )
+        );
+
+        if (appliedDiscountCode) {
+          await tx.discountUsage.create({
+            data: {
+              discountCodeId: appliedDiscountCode.id,
+              userId,
+              orderId: order.id,
+              originalAmount,
+              discountAmount,
+              finalAmount,
+            },
+          });
+
+          await tx.discountCode.update({
+            where: { id: appliedDiscountCode.id },
+            data: { usedCount: { increment: 1 } },
+          });
+        }
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'COMPLETED' },
+        });
+
+        return newEnrollments;
+      });
+
+      return res.status(201).json({
+        success: true,
+        enrollments: enrollments.map(enrollment => ({
+          id: enrollment.id,
+          courseId: enrollment.courseId,
+          courseName: enrollment.course.title,
+          enrolledAt: enrollment.enrolledAt,
+          transactionId: enrollment.paymentTransactionId,
+        })),
+        redirectUrl: '/my-courses',
+        discountApplied: appliedDiscountCode
+          ? {
+              code: appliedDiscountCode.code,
+              discountAmount: Number(discountAmount.toFixed(2)),
+              finalAmount: Number(finalAmount.toFixed(2)),
+              originalAmount: Number(originalAmount.toFixed(2)),
+            }
+          : null,
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: bundle.name,
+              metadata: { bundleId: parsedBundleId },
+            },
+            unit_amount: Math.round(finalAmount * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}&bundle_id=${parsedBundleId}`,
+      cancel_url: `${process.env.FRONTEND_URL}/courses/${bundle.courseItems[0]?.course.id || parsedCourseId}`,
+      metadata: {
+        userId: userId.toString(),
+        orderId: order.id.toString(),
+        bundleId: parsedBundleId.toString(),
+        discountCode: appliedDiscountCode ? appliedDiscountCode.code : null,
+        discountAmount: discountAmount.toString(),
+        finalAmount: finalAmount.toString(),
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      sessionId: session.id,
+      url: session.url,
+      orderId: order.id,
+      discountApplied: appliedDiscountCode
+        ? {
+            code: appliedDiscountCode.code,
+            discountAmount: Number(discountAmount.toFixed(2)),
+            finalAmount: Number(finalAmount.toFixed(2)),
+            originalAmount: Number(originalAmount.toFixed(2)),
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('Error purchasing bundle:', error);
+    res.status(500).json({
+      success: false,
       message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
     });
   }
@@ -734,5 +1117,9 @@ module.exports = {
   updateCourse,
   deleteCourse,
   searchCourses,
-  purchaseCourse, // NEW
+  purchaseCourse,
+  getBundles,
+  enrollFreeCourse,
+  checkEnrollment,
+  purchaseBundle,
 };
