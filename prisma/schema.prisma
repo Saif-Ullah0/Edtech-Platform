@@ -177,10 +177,10 @@ model User {
   email     String       @unique
   password  String
   role      Role         @default(USER)
-  
-  // 🆕 NEW: User status field (from ETP-001)
   status    String       @default("ACTIVE") // "ACTIVE", "BANNED", "DELETED"
-  
+  // 🆕 NEW: Social login fields
+  provider  String?      // e.g., "google", "facebook"
+  providerId String?     // Unique ID from social provider
   courses   Enrollment[] 
   orders    Order[]      
   createdAt DateTime     @default(now())
@@ -188,15 +188,11 @@ model User {
   commentReactions  CommentReaction[]
   discountUsages    DiscountUsage[]
   createdDiscounts  DiscountCode[]  @relation("DiscountCreator")
-  // Module-wise payment relations
   moduleEnrollments ModuleEnrollment[]
   bundles           Bundle[]
   bundlePurchases   BundlePurchase[]
-  canCreatePublicBundles Boolean @default(false) // Only admins or approved users can create public bundles
-
-  // 🆕 NEW: Chapter progress tracking
+  canCreatePublicBundles Boolean @default(false)
   chapterProgress   ChapterProgress[]
-  
 }
 
 model Category {
