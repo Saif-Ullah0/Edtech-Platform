@@ -1,23 +1,19 @@
-// backend/src/controllers/authController.js
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../../prisma/client');
+const passport = require('passport');
 
 const generateToken = (user) => {
   const payload = {
-    userId: user.id,  
-    email: user.email, 
-    role: user.role    
+    userId: user.id,
+    email: user.email,
+    role: user.role,
   };
-  
+
   console.log('Generating token with payload:', payload);
-  
-  const token = jwt.sign(
-    payload,
-    process.env.JWT_SECRET,
-    { expiresIn: '1h' }
-  );
-  
+
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
   console.log('Generated Token:', token);
   return token;
 };
@@ -64,15 +60,15 @@ const register = async (req, res) => {
     res.status(201).json({
       message: 'User registered successfully',
       user,
-      token
+      token,
     });
-
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
 
+// Login
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -85,7 +81,7 @@ const login = async (req, res) => {
         email: true,
         password: true,
         role: true,
-        status: true,    // 🆕 ADD THIS LINE
+        status: true,
         createdAt: true,
       },
     });
@@ -94,7 +90,6 @@ const login = async (req, res) => {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // 🆕 ADD THESE STATUS CHECKS
     if (user.status === 'BANNED') {
       return res.status(403).json({ error: 'Account has been banned. Please contact support.' });
     }
@@ -103,7 +98,6 @@ const login = async (req, res) => {
       return res.status(403).json({ error: 'Account has been deactivated.' });
     }
 
-    // Check password
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
       return res.status(400).json({ error: 'Invalid credentials' });
@@ -123,15 +117,15 @@ const login = async (req, res) => {
     res.json({
       message: 'Login successful',
       user: userWithoutPassword,
-      token
+      token,
     });
-
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
 
+// Logout
 const logout = async (req, res) => {
   try {
     res.clearCookie('token', {
@@ -147,8 +141,60 @@ const logout = async (req, res) => {
   }
 };
 
+// Google Auth
+const googleAuth = passport.authenticate('google', { scope: ['profile', 'email'] });
+
+// Google Auth Callback
+const googleAuthCallback = (req, res) => {
+  passport.authenticate('google', { session: false }, (err, user) => {
+    if (err || !user) {
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+
+    const token = generateToken(user);
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 360000000,
+    });
+
+    const redirectUrl = user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard';
+    res.redirect(`${process.env.FRONTEND_URL}${redirectUrl}`);
+  })(req, res);
+};
+
+// Facebook Auth
+const facebookAuth = passport.authenticate('facebook', { scope: ['email'] });
+
+// Facebook Auth Callback
+const facebookAuthCallback = (req, res) => {
+  passport.authenticate('facebook', { session: false }, (err, user) => {
+    if (err || !user) {
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+    }
+
+    const token = generateToken(user);
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 360000000,
+    });
+
+    const redirectUrl = user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard';
+    res.redirect(`${process.env.FRONTEND_URL}${redirectUrl}`);
+  })(req, res);
+};
+
 module.exports = {
   register,
   login,
   logout,
+  googleAuth,
+  googleAuthCallback,
+  facebookAuth,
+  facebookAuthCallback,
 };
