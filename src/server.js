@@ -42,7 +42,7 @@ const discountRoutes = require('./routes/discountRoutes');
 const startOrderCleanupJob = require('./cron/orderCleanupJob');
 startOrderCleanupJob();
 
-const passport = require('./passportConfig'); // Import Passport configuration
+const passport = require('./passportConfig'); 
 
 const app = express();
 
