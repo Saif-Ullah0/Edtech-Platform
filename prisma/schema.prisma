@@ -1,10 +1,3 @@
-// schema.prisma - UPDATED
-// Changes:
-// - Added discountCodeId to Order model for direct linking as per desired solution.
-// - Added relation to DiscountCode.
-// - No other changes needed; existing DiscountCode and DiscountUsage are sufficient.
-// - Ensured DiscountUsage can link to Order.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,6 +5,408 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Comment {
+  id            Int               @id @default(autoincrement())
+  content       String
+  userId        Int
+  noteId        Int?
+  videoId       Int?
+  parentId      Int?
+  isDeleted     Boolean           @default(false)
+  isEdited      Boolean           @default(false)
+  likesCount    Int               @default(0)
+  dislikesCount Int               @default(0)
+  repliesCount  Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  reactions     CommentReaction[]
+  note          Note?             @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  parent        Comment?          @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[]         @relation("CommentReplies")
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video         Video?            @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, createdAt])
+  @@index([videoId, createdAt])
+  @@index([parentId])
+  @@map("comments")
+}
+
+model CommentReaction {
+  id        Int          @id @default(autoincrement())
+  type      ReactionType
+  userId    Int
+  commentId Int
+  createdAt DateTime     @default(now())
+  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@map("comment_reactions")
+}
+
+model DiscountCode {
+  id                Int                    @id @default(autoincrement())
+  code              String                 @unique
+  name              String?
+  description       String?
+  type              DiscountType           @default(PERCENTAGE)
+  value             Float
+  maxUses           Int?
+  usedCount         Int                    @default(0)
+  maxUsesPerUser    Int?                   @default(1)
+  startsAt          DateTime?
+  expiresAt         DateTime?
+  minPurchaseAmount Float?                 @default(0)
+  maxDiscountAmount Float?
+  applicableToType  DiscountApplicableType @default(ALL)
+  applicableToId    Int?
+  isActive          Boolean                @default(true)
+  isPublic          Boolean                @default(false)
+  createdBy         Int?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  orders            Order[]
+  creator           User?                  @relation("DiscountCreator", fields: [createdBy], references: [id])
+  usages            DiscountUsage[]
+
+  @@map("discount_codes")
+}
+
+model DiscountUsage {
+  id             Int          @id @default(autoincrement())
+  discountCodeId Int
+  userId         Int
+  orderId        Int?
+  bundleId       Int?
+  originalAmount Float
+  discountAmount Float
+  finalAmount    Float
+  createdAt      DateTime     @default(now())
+  discountCode   DiscountCode @relation(fields: [discountCodeId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@index([discountCodeId, userId])
+  @@map("discount_usages")
+}
+
+model User {
+  id                     Int                @id @default(autoincrement())
+  name                   String
+  email                  String             @unique
+  password               String
+  role                   Role               @default(USER)
+  createdAt              DateTime           @default(now())
+  status                 String             @default("ACTIVE")
+  canCreatePublicBundles Boolean            @default(false)
+  provider               String?
+  providerId             String?
+  courses                Enrollment[]
+  orders                 Order[]
+  bundlePurchases        BundlePurchase[]
+  bundles                Bundle[]
+  chapterProgress        ChapterProgress[]
+  commentReactions       CommentReaction[]
+  comments               Comment[]
+  createdDiscounts       DiscountCode[]     @relation("DiscountCreator")
+  discountUsages         DiscountUsage[]
+  moduleEnrollments      ModuleEnrollment[]
+}
+
+model Category {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique
+  description String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  isDeleted   Boolean  @default(false)
+  courses     Course[]
+}
+
+model Course {
+  id                Int                @id @default(autoincrement())
+  title             String             @unique
+  description       String
+  price             Float
+  categoryId        Int
+  createdAt         DateTime           @default(now())
+  imageUrl          String?
+  isDeleted         Boolean            @default(false)
+  slug              String             @unique
+  isPaid            Boolean            @default(false)
+  publishStatus     String             @default("DRAFT")
+  category          Category           @relation(fields: [categoryId], references: [id])
+  enrollments       Enrollment[]
+  modules           Module[]
+  orderItems        OrderItem[]
+  courseBundleItems CourseBundleItem[]
+  notes             Note[]
+  videos            Video[]
+}
+
+model Module {
+  id                Int                @id @default(autoincrement())
+  title             String
+  courseId          Int
+  createdAt         DateTime           @default(now())
+  orderIndex        Int                @default(0)
+  type              ModuleType         @default(TEXT)
+  updatedAt         DateTime           @default(now()) @updatedAt
+  isFree            Boolean            @default(false)
+  isPublished       Boolean            @default(false)
+  price             Float              @default(0)
+  description       String?
+  publishStatus     String             @default("DRAFT")
+  slug              String?            @unique
+  course            Course             @relation(fields: [courseId], references: [id])
+  moduleProgress    ModuleProgress[]
+  bundleItems       BundleItem[]
+  chapters          Chapter[]
+  moduleEnrollments ModuleEnrollment[]
+  notes             Note[]
+  videos            Video[]
+}
+
+model Chapter {
+  id              String            @id @default(cuid())
+  title           String
+  description     String?
+  content         String?
+  videoUrl        String?
+  duration        Int?
+  order           Int               @default(0)
+  type            ChapterType       @default(TEXT)
+  publishStatus   String            @default("DRAFT")
+  videoSize       BigInt?
+  videoDuration   Int?
+  thumbnailUrl    String?
+  moduleId        Int
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  chapterProgress ChapterProgress[]
+  module          Module            @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  notes           Note[]
+  videos          Video[]
+
+  @@map("chapters")
+}
+
+model ChapterProgress {
+  id                   String    @id @default(cuid())
+  userId               Int
+  chapterId            String
+  isCompleted          Boolean   @default(false)
+  watchTime            Int       @default(0)
+  completionPercentage Float     @default(0.0)
+  completedAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  chapter              Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chapterId])
+  @@map("chapter_progress")
+}
+
+model ModuleEnrollment {
+  id                   Int      @id @default(autoincrement())
+  userId               Int
+  moduleId             Int
+  progress             Float    @default(0)
+  completed            Boolean  @default(false)
+  paymentTransactionId String?
+  purchasePrice        Float
+  purchaseDate         DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  module               Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId])
+  @@map("module_enrollments")
+}
+
+model Bundle {
+  id            Int                @id @default(autoincrement())
+  name          String
+  description   String?
+  userId        Int
+  totalPrice    Float
+  discount      Float              @default(0)
+  finalPrice    Float
+  isActive      Boolean            @default(true)
+  isPurchased   Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  featuredOrder Int?
+  isFeatured    Boolean            @default(false)
+  isPopular     Boolean            @default(false)
+  promotedUntil DateTime?
+  revenue       Float              @default(0)
+  salesCount    Int                @default(0)
+  type          String             @default("MODULE")
+  viewCount     Int                @default(0)
+  isPublic      Boolean            @default(false)
+  moduleItems   BundleItem[]
+  purchases     BundlePurchase[]
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseItems   CourseBundleItem[]
+
+  @@map("bundles")
+}
+
+model CourseBundleItem {
+  id       Int    @id @default(autoincrement())
+  bundleId Int
+  courseId Int
+  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, courseId])
+  @@map("course_bundle_items")
+}
+
+model BundleItem {
+  id       Int    @id @default(autoincrement())
+  bundleId Int
+  moduleId Int
+  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, moduleId])
+  @@map("bundle_items")
+}
+
+model BundlePurchase {
+  id                   Int      @id @default(autoincrement())
+  bundleId             Int
+  userId               Int
+  paymentTransactionId String?
+  purchasePrice        Float
+  discount             Float
+  finalPrice           Float
+  createdAt            DateTime @default(now())
+  bundleType           String
+  itemCount            Int
+  bundle               Bundle   @relation(fields: [bundleId], references: [id])
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("bundle_purchases")
+}
+
+model Note {
+  id            Int       @id @default(autoincrement())
+  title         String
+  slug          String    @unique
+  description   String?
+  content       String?
+  fileUrl       String?
+  fileName      String?
+  fileSize      String?
+  fileType      String?
+  downloadCount Int       @default(0)
+  isPublished   Boolean   @default(false)
+  orderIndex    Int       @default(0)
+  courseId      Int
+  moduleId      Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  isDeleted     Boolean   @default(false)
+  chapterId     String?
+  comments      Comment[]
+  chapter       Chapter?  @relation(fields: [chapterId], references: [id])
+  course        Course    @relation(fields: [courseId], references: [id])
+  module        Module?   @relation(fields: [moduleId], references: [id])
+
+  @@map("notes")
+}
+
+model Video {
+  id            Int       @id @default(autoincrement())
+  title         String
+  slug          String    @unique
+  description   String?
+  videoUrl      String?
+  thumbnailUrl  String?
+  fileName      String?
+  fileSize      String?
+  fileType      String?
+  duration      Int?
+  quality       String?
+  resolution    String?
+  uploadStatus  String    @default("PENDING")
+  isPublished   Boolean   @default(false)
+  orderIndex    Int       @default(0)
+  viewCount     Int       @default(0)
+  downloadCount Int       @default(0)
+  courseId      Int
+  moduleId      Int?
+  chapterId     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  isDeleted     Boolean   @default(false)
+  comments      Comment[]
+  chapter       Chapter?  @relation(fields: [chapterId], references: [id])
+  course        Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module        Module?   @relation(fields: [moduleId], references: [id])
+
+  @@map("videos")
+}
+
+model Enrollment {
+  id                   Int              @id @default(autoincrement())
+  userId               Int
+  courseId             Int
+  createdAt            DateTime         @default(now())
+  lastAccessed         DateTime         @default(now()) @updatedAt
+  progress             Float?           @default(0.0)
+  paymentTransactionId String?
+  course               Course           @relation(fields: [courseId], references: [id])
+  user                 User             @relation(fields: [userId], references: [id])
+  moduleProgress       ModuleProgress[]
+
+  @@unique([userId, courseId])
+}
+
+model ModuleProgress {
+  id                   Int        @id @default(autoincrement())
+  enrollmentId         Int
+  moduleId             Int
+  isCompleted          Boolean    @default(false)
+  watchTime            Int        @default(0)
+  completionPercentage Float      @default(0.0)
+  completedAt          DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  module               Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, moduleId])
+}
+
+model Order {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  status         OrderStatus   @default(PENDING)
+  totalAmount    Float
+  createdAt      DateTime      @default(now())
+  discountCodeId Int?
+  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id])
+  user           User          @relation(fields: [userId], references: [id])
+  items          OrderItem[]
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  courseId  Int
+  price     Float
+  createdAt DateTime @default(now())
+  course    Course   @relation(fields: [courseId], references: [id])
+  order     Order    @relation(fields: [orderId], references: [id])
 }
 
 enum Role {
@@ -32,7 +427,6 @@ enum ModuleType {
   QUIZ
 }
 
-// 🆕 NEW: Chapter types
 enum ChapterType {
   TEXT
   VIDEO
@@ -50,533 +444,8 @@ enum DiscountType {
   FIXED_AMOUNT
 }
 
-model Comment {
-  id        Int       @id @default(autoincrement())
-  content   String    @db.Text
-  userId    Int
-  
-  // Resource relationships
-  noteId    Int?
-  videoId   Int?
-  
-  // Nested comments
-  parentId  Int?
-  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies   Comment[] @relation("CommentReplies")
-  
-  // Status
-  isDeleted Boolean   @default(false)
-  isEdited  Boolean   @default(false)
-  
-  // Analytics
-  likesCount    Int @default(0)
-  dislikesCount Int @default(0)
-  repliesCount  Int @default(0)
-  
-  // Relations
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  note      Note?              @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  video     Video?             @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  reactions CommentReaction[]
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  @@index([noteId, createdAt])
-  @@index([videoId, createdAt])
-  @@index([parentId])
-  @@map("comments")
-}
-
-model CommentReaction {
-  id        Int           @id @default(autoincrement())
-  type      ReactionType
-  userId    Int
-  commentId Int
-  
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime @default(now())
-  
-  @@unique([userId, commentId])
-  @@map("comment_reactions")
-}
-
 enum DiscountApplicableType {
   ALL
   CATEGORY
   COURSE
-}
-
-// Update your existing DiscountCode model with these changes
-model DiscountCode {
-  id          Int       @id @default(autoincrement())
-  code        String    @unique
-  name        String?
-  description String?
-  
-  type        DiscountType @default(PERCENTAGE)
-  value       Float
-  
-  maxUses        Int?     
-  usedCount      Int      @default(0)
-  maxUsesPerUser Int?     @default(1)
-  
-  startsAt       DateTime?
-  expiresAt      DateTime?
-  
-  minPurchaseAmount Float? @default(0)
-  maxDiscountAmount Float?
-  
-  // 🆕 UPDATED: Change from String to enum
-  applicableToType  DiscountApplicableType @default(ALL)
-  // 🆕 NEW: Add specific ID for course or category
-  applicableToId    Int?
-  
-  isActive    Boolean @default(true)
-  isPublic    Boolean @default(false)
-  
-  usages      DiscountUsage[]
-  // 🆕 NEW: Direct link to orders
-  orders      Order[]
-  
-  createdBy   Int?
-  creator     User?   @relation("DiscountCreator", fields: [createdBy], references: [id])
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@map("discount_codes")
-}
-
-model DiscountUsage {
-  id             Int      @id @default(autoincrement())
-  discountCodeId Int
-  userId         Int
-  orderId        Int?
-  bundleId       Int?
-  
-  originalAmount Float
-  discountAmount Float
-  finalAmount    Float
-  
-  discountCode   DiscountCode @relation(fields: [discountCodeId], references: [id])
-  user           User         @relation(fields: [userId], references: [id])
-  
-  createdAt      DateTime @default(now())
-  
-  @@index([discountCodeId, userId])
-  @@map("discount_usages")
-}
-
-
-model User {
-  id        Int          @id @default(autoincrement())
-  name      String
-  email     String       @unique
-  password  String
-  role      Role         @default(USER)
-  status    String       @default("ACTIVE") // "ACTIVE", "BANNED", "DELETED"
-  // 🆕 NEW: Social login fields
-  provider  String?      // e.g., "google", "facebook"
-  providerId String?     // Unique ID from social provider
-  courses   Enrollment[] 
-  orders    Order[]      
-  createdAt DateTime     @default(now())
-  comments          Comment[]
-  commentReactions  CommentReaction[]
-  discountUsages    DiscountUsage[]
-  createdDiscounts  DiscountCode[]  @relation("DiscountCreator")
-  moduleEnrollments ModuleEnrollment[]
-  bundles           Bundle[]
-  bundlePurchases   BundlePurchase[]
-  canCreatePublicBundles Boolean @default(false)
-  chapterProgress   ChapterProgress[]
-}
-
-model Category {
-  id          Int      @id @default(autoincrement())
-  name        String
-  slug        String   @unique
-  description String?
-  imageUrl    String?
-  createdAt   DateTime @default(now())
-  isDeleted   Boolean  @default(false)
-  courses     Course[]
-}
-
-model Course {
-  id          Int      @id @default(autoincrement())
-  title       String   @unique
-  slug        String   @unique
-  description String
-  price       Float
-  imageUrl    String?
-  isDeleted   Boolean  @default(false)
-  
-  // 🆕 NEW: Course publishing and pricing fields (from ETP-001)
-  publishStatus String  @default("DRAFT")     // "DRAFT" or "PUBLISHED"
-  isPaid        Boolean @default(false)       // true = paid course, false = free
-  
-  createdAt   DateTime @default(now())
-
-  categoryId Int
-  category   Category @relation(fields: [categoryId], references: [id])
-  notes       Note[]
-  videos      Video[]  // ADD THIS LINE
-
-  courseBundleItems CourseBundleItem[]
-
-  modules     Module[]
-  enrollments Enrollment[]
-  orderItems  OrderItem[]  
-}
-
-model Module {
-  id          Int        @id @default(autoincrement())
-  title       String
-  
-  // 🆕 ADD: Description field for better admin management
-  description String?
-  
-  // 🆕 ADD: Slug for SEO-friendly URLs
-  slug        String?    @unique
-  
-  type        ModuleType @default(TEXT)
-  orderIndex  Int        @default(0)
-  
-  // Module pricing fields (keep these)
-  price       Float      @default(0)
-  isFree      Boolean    @default(false)
-  isPublished Boolean    @default(false)
-  
-  // 🆕 ADD: Publishing status to match Course and Chapter
-  publishStatus String   @default("DRAFT") // "DRAFT" or "PUBLISHED"
-  
-  notes       Note[]
-  videos      Video[]  // ADD THIS LINE
-
-
-  courseId    Int
-  course      Course @relation(fields: [courseId], references: [id])
-  
-  chapters    Chapter[]
-  
-  // Existing relations
-  moduleProgress ModuleProgress[]
-  moduleEnrollments ModuleEnrollment[]
-  bundleItems       BundleItem[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt @default(now())
-}
-
-// 🆕 NEW: Chapter model
-model Chapter {
-  id          String      @id @default(cuid())
-  title       String
-  description String?
-  content     String?     // For text chapters
-  videoUrl    String?     // For video chapters
-  duration    Int?        // In seconds for videos
-  order       Int         @default(0)
-  type        ChapterType @default(TEXT)
-  publishStatus String    @default("DRAFT") // "DRAFT" or "PUBLISHED"
-  
-  // Video-specific fields (moved from Module)
-  videoSize     BigInt?
-  videoDuration Int?
-  thumbnailUrl  String?
-  
-  // REQUIRED: Chapter must belong to a module
-  moduleId    Int
-  module      Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  
-  // 🆕 NEW: Notes relation
-  notes       Note[]
-  videos      Video[]  // ADD THIS LINE
-
-  // 🆕 NEW: Chapter progress tracking
-  chapterProgress ChapterProgress[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@map("chapters")
-}
-
-// 🆕 NEW: Chapter progress tracking
-model ChapterProgress {
-  id                   String    @id @default(cuid())
-  userId               Int
-  chapterId            String
-  isCompleted          Boolean   @default(false)
-  watchTime            Int       @default(0)
-  completionPercentage Float     @default(0.0)
-  completedAt          DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-
-  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chapter              Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, chapterId])
-  @@map("chapter_progress")
-}
-
-// Individual module enrollments/purchases
-model ModuleEnrollment {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  moduleId  Int
-  progress  Float    @default(0)
-  completed Boolean  @default(false)
-  
-  // Payment tracking
-  paymentTransactionId String?
-  purchasePrice        Float
-  purchaseDate         DateTime @default(now())
-  
-  // Relations
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  module    Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  @@unique([userId, moduleId])
-  @@map("module_enrollments")
-}
-
-// User-created bundles
-model Bundle {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  userId      Int
-  totalPrice  Float
-  discount    Float    @default(0) // Percentage discount
-  finalPrice  Float    // After discount
-  
-  // 🆕 NEW: Bundle type and promotional fields
-  type        String   @default("MODULE") // "MODULE" or "COURSE"
-  
-  // Bundle status
-  isActive    Boolean  @default(true)
-  isPurchased Boolean  @default(false)
-  
-  // 🆕 NEW: Promotional fields
-  isFeatured  Boolean  @default(false)  // Admin can mark as featured
-  isPopular   Boolean  @default(false)  // Automatically determined by sales
-  
-  // 🆕 NEW: Analytics fields
-  salesCount  Int      @default(0)      // Number of times purchased
-  revenue     Float    @default(0)      // Total revenue generated
-  viewCount   Int      @default(0)      // Number of times viewed
-  isPublic    Boolean  @default(false)  // Controls marketplace visibility
-
-  // 🆕 NEW: Admin promotion fields
-  featuredOrder Int?                    // Order in featured section (null = not featured)
-  promotedUntil DateTime?               // Featured until this date
-  
-  // Relations
-  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  moduleItems  BundleItem[]      // Existing module items
-  courseItems  CourseBundleItem[] // 🆕 NEW: Course items
-  purchases    BundlePurchase[]
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@map("bundles")
-}
-model CourseBundleItem {
-  id       Int @id @default(autoincrement())
-  bundleId Int
-  courseId Int
-  
-  // Relations
-  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
-  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  
-  @@unique([bundleId, courseId])
-  @@map("course_bundle_items")
-}
-// Items in a bundle
-model BundleItem {
-  id       Int @id @default(autoincrement())
-  bundleId Int
-  moduleId Int
-  
-  // Relations
-  bundle   Bundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
-  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  
-  @@unique([bundleId, moduleId])
-  @@map("bundle_items")
-}
-
-model BundlePurchase {
-  id                   Int      @id @default(autoincrement())
-  bundleId             Int
-  userId               Int
-  paymentTransactionId String?
-  purchasePrice        Float
-  discount             Float
-  finalPrice           Float
-  
-  // 🆕 NEW: Analytics fields
-  bundleType           String   // "MODULE" or "COURSE"
-  itemCount            Int      // Number of items in bundle
-  
-  // Relations
-  bundle    Bundle @relation(fields: [bundleId], references: [id])
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime @default(now())
-
-  @@map("bundle_purchases")
-}
-
-model Note {
-  id          Int      @id @default(autoincrement())
-  title       String
-  slug        String   @unique
-  description String?
-  content     String?
-  fileUrl     String?
-  fileName    String?
-  fileSize    String?
-  fileType    String?
-  downloadCount Int    @default(0)
-  isPublished Boolean  @default(false)
-  orderIndex  Int      @default(0)
-  
-  // Relationships
-  courseId    Int
-  course      Course   @relation(fields: [courseId], references: [id])
-  moduleId    Int?
-  module      Module?  @relation(fields: [moduleId], references: [id])
-  comments          Comment[]
-
-  // 🆕 NEW: Chapter support
-  chapterId   String?
-  chapter     Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  
-  // Timestamps
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  isDeleted   Boolean  @default(false)
-  
-  @@map("notes")
-}
-
-model Video {
-  id            Int      @id @default(autoincrement())
-  title         String
-  slug          String   @unique
-  description   String?
-  comments          Comment[]
-
-  // Video file information
-  videoUrl      String?   // Path to video file
-  thumbnailUrl  String?   // Path to thumbnail image
-  fileName      String?   // Original filename
-  fileSize      String?   // File size in bytes
-  fileType      String?   // Video format (mp4, avi, etc.)
-  
-  // Video metadata
-  duration      Int?      // Duration in seconds
-  quality       String?   // HD, 4K, etc.
-  resolution    String?   // 1920x1080, etc.
-  
-  // Management fields
-  uploadStatus  String    @default("PENDING") // "PENDING", "PROCESSING", "COMPLETED", "FAILED"
-  isPublished   Boolean   @default(false)
-  orderIndex    Int       @default(0)
-  
-  // Analytics
-  viewCount     Int       @default(0)
-  downloadCount Int       @default(0)
-  
-  // Hierarchical relationships (same as Notes)
-  courseId      Int
-  course        Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  
-  moduleId      Int?
-  module        Module?   @relation(fields: [moduleId], references: [id], onDelete: SetNull)
-  
-  chapterId     String?
-  chapter       Chapter?  @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  
-  // Timestamps
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  isDeleted     Boolean   @default(false)
-  
-  @@map("videos")
-}
-
-model Enrollment {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  courseId  Int
-  createdAt DateTime @default(now())
-  
-  // Progress tracking fields
-  progress     Float?   @default(0.0)
-  lastAccessed DateTime @default(now()) @updatedAt
-  
-  // Payment tracking for course enrollments
-  paymentTransactionId String?
-
-  user   User   @relation(fields: [userId], references: [id])
-  course Course @relation(fields: [courseId], references: [id])
-  
-  // Module progress relation
-  moduleProgress ModuleProgress[]
-
-  @@unique([userId, courseId])
-}
-
-// Module progress tracking (keep for backward compatibility)
-model ModuleProgress {
-  id                   Int       @id @default(autoincrement())
-  enrollmentId         Int
-  moduleId             Int
-  isCompleted          Boolean   @default(false)
-  watchTime            Int       @default(0)
-  completionPercentage Float     @default(0.0)
-  completedAt          DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-
-  enrollment           Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  module               Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-
-  @@unique([enrollmentId, moduleId])
-}
-
-model Order {
-  id             Int          @id @default(autoincrement())
-  userId         Int
-  status         OrderStatus  @default(PENDING)
-  totalAmount    Float
-  createdAt      DateTime     @default(now())
-  user           User         @relation(fields: [userId], references: [id])
-  items          OrderItem[]
-  discountCodeId Int?
-  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id])
-}
-
-model OrderItem {
-  id        Int      @id @default(autoincrement())
-  orderId   Int
-  courseId  Int
-  price     Float     
-  createdAt DateTime  @default(now())
-
-  order     Order     @relation(fields: [orderId], references: [id])
-  course    Course    @relation(fields: [courseId], references: [id])
 }
