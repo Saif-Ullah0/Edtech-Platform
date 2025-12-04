@@ -23,25 +23,27 @@ async function main() {
   console.log('🧹 Cleaning existing data (ordered, safe-mode)...');
 
   // delete children first (adjust names to your schema if different)
-  await safeDelete('chapterProgress');
-  await safeDelete('moduleProgress');
-  await safeDelete('moduleEnrollment');
-  await safeDelete('bundlePurchase');
-  await safeDelete('orderItem');
-  await safeDelete('order');
-  await safeDelete('reaction'); // optional
-  await safeDelete('comment'); // optional
-  await safeDelete('bundleItem');
-  await safeDelete('courseBundleItem');
-  await safeDelete('bundle');
-  await safeDelete('note');
-  await safeDelete('chapter');
-  await safeDelete('module');
-  await safeDelete('enrollment');
-  await safeDelete('course');
-  await safeDelete('category');
+  // delete children first (adjust names to your schema if different)
+  await safeDelete('chapterProgress');    // ChapterProgress
+  await safeDelete('moduleProgress');     // ModuleProgress
+  await safeDelete('moduleEnrollment');   // ModuleEnrollment
+  await safeDelete('bundlePurchase');     // BundlePurchase
+  await safeDelete('orderItem');          // OrderItem
+  await safeDelete('order');              // Order
+  await safeDelete('commentReaction');    // CommentReaction (was reaction)
+  await safeDelete('comment');            // Comment
+  await safeDelete('bundleItem');         // BundleItem
+  await safeDelete('courseBundleItem');   // CourseBundleItem
+  await safeDelete('bundle');             // Bundle
+  await safeDelete('note');               // Note
+  await safeDelete('chapter');            // Chapter
+  await safeDelete('module');             // Module
+  await safeDelete('enrollment');         // Enrollment
+  await safeDelete('course');             // Course
+  await safeDelete('category');           // Category
   // finally users
-  await safeDelete('user');
+  await safeDelete('user');               // User
+
 
   // =====================================
   // USERS (use upsert to avoid duplicates)
@@ -669,66 +671,49 @@ async function main() {
 
   console.log('✅ Bundles created');
 
-    // =====================================
-  // ORDERS & ORDER ITEMS (wrapped in try/catch, schema-tolerant)
+   // =====================================
+  // ORDERS & ORDER ITEMS (schema-compatible)
   // =====================================
   console.log('💳 Creating test orders and order items...');
 
   try {
-    // create a basic order record without schema-specific relation fields
     const order1 = await prisma.order.create({
       data: {
-        // prefer primitive scalar userId if model exposes it; otherwise Prisma will
-        // accept this for models that have `userId` field. If your schema uses a relation
-        // (user:{connect:{id:...}}), this call may still work if `userId` exists.
-        userId: testUser.id,
-        // courseId removed because your schema reported it as unknown
-        price: reactCourse.price ?? 0,
-        totalAmount: reactCourse.price ?? 0, // required in your schema earlier
-        status: 'COMPLETED',
-        transactionId: 'txn_react_001',
+        userId: testUser.id, // required
+        totalAmount: reactCourse.price ?? 0, // matches schema: totalAmount
+        status: 'COMPLETED', // OrderStatus enum
+        // optional: discountCodeId: null,
         createdAt: new Date()
       }
     });
 
-    // create a matching order item if orderItem model accepts simple scalar fields
+    // Create a corresponding order item (schema OrderItem has courseId & price)
     try {
       await prisma.orderItem.create({
         data: {
           orderId: order1.id,
-          // some schemas expect `productId` / `courseId` name differs; if this fails it will be caught
           courseId: reactCourse.id,
-          price: reactCourse.price ?? 0,
-          totalAmount: reactCourse.price ?? 0
+          price: reactCourse.price ?? 0
         }
       });
     } catch (e) {
       console.warn('⚠️ OrderItem creation skipped (schema mismatch):', e.message);
-      // try fallback: create orderItem using minimal required fields if available
-      try {
-        await prisma.orderItem.create({
-          data: {
-            orderId: order1.id,
-            price: reactCourse.price ?? 0,
-            totalAmount: reactCourse.price ?? 0
-          }
-        });
-      } catch (err) {
-        console.warn('⚠️ OrderItem fallback also failed, skipping:', err.message);
-      }
     }
   } catch (e) {
     console.warn('⚠️ Order seeding warning (skipped):', e.message);
   }
 
-  // create a bundle purchase; include `discount` default in case model requires it
+  // create a bundle purchase entry (safe defaults)
   try {
     await prisma.bundlePurchase.create({
       data: {
         userId: testUser.id,
         bundleId: webDevBundle.id,
         purchasePrice: webDevBundle.finalPrice ?? webDevBundle.totalPrice ?? 0,
-        discount: webDevBundle.discount ?? 0, // safe default if required
+        discount: webDevBundle.discount ?? 0,
+        finalPrice: webDevBundle.finalPrice ?? webDevBundle.totalPrice ?? 0,
+        bundleType: webDevBundle.type ?? 'COURSE',
+        itemCount: 2, // adjust if necessary
         transactionId: 'txn_bundle_001',
         createdAt: new Date()
       }
@@ -739,87 +724,94 @@ async function main() {
 
   console.log('✅ Orders and bundle purchases attempted');
 
-  // =====================================
-  // COMMENTS & REACTIONS (tolerant)
+   // =====================================
+  // COMMENTS & REACTIONS (schema-aware)
   // =====================================
   console.log('💬 Creating comments and reactions...');
 
-  // Try creating a chapter comment (many LMS schemas use chapterId/noteId/videoId)
+  // locate a note to attach comments to (fallback to first note)
+  const pythonNote = await prisma.note.findFirst({ where: { slug: 'python-cheat-sheet' } });
+
   try {
-    const comment1 = await prisma.comment.create({
-      data: {
-        userId: regularUser.id,
-        // prefer attaching to chapterId — if your schema uses noteId/videoId,
-        // this may throw and will be caught below
-        chapterId: pythonCh1.id,
-        content: 'Great intro! Very clear explanations.',
-        isDeleted: false,
-        createdAt: new Date()
-      }
-    });
-
-    // reply
-    let reply1;
-    try {
-      reply1 = await prisma.comment.create({
+    if (!pythonNote) {
+      console.warn('ℹ️ No note found to attach comments to. Skipping comment seed.');
+    } else {
+      const comment1 = await prisma.comment.create({
         data: {
-          userId: testUser.id,
-          chapterId: pythonCh1.id,
-          parentId: comment1.id,
-          content: 'Agreed — the examples are helpful.',
+          userId: regularUser.id,
+          noteId: pythonNote.id,
+          content: 'Great intro! Very clear explanations.',
           isDeleted: false,
           createdAt: new Date()
         }
       });
 
-      await prisma.comment.create({
-        data: {
-          userId: adminUser.id,
-          chapterId: pythonCh1.id,
-          parentId: reply1.id,
-          content: 'Thanks for the feedback — I will add more exercises!',
-          isDeleted: false,
-          createdAt: new Date()
-        }
-      });
-    } catch (e) {
-      console.warn('⚠️ Reply creation skipped (schema mismatch):', e.message);
-    }
-
-    // extra top-level comment on React chapter
-    try {
-      await prisma.comment.create({
-        data: {
-          userId: testUser.id,
-          chapterId: reactCh1.id,
-          content: 'Can you provide more advanced resources?',
-          isDeleted: false,
-          createdAt: new Date()
-        }
-      });
-    } catch (e) {
-      console.warn('⚠️ Additional comment skipped (schema mismatch):', e.message);
-    }
-
-    // reactions: try createMany if model exists & supports these fields
-    if (prisma.reaction) {
+      // reply
+      let reply1;
       try {
-        await prisma.reaction.createMany({
-          data: [
-            { userId: regularUser.id, commentId: comment1.id, type: 'LIKE' },
-            { userId: testUser.id, commentId: comment1.id, type: 'LIKE' }
-          ]
+        reply1 = await prisma.comment.create({
+          data: {
+            userId: testUser.id,
+            noteId: pythonNote.id,
+            parentId: comment1.id,
+            content: 'Agreed — the examples are helpful.',
+            isDeleted: false,
+            createdAt: new Date()
+          }
+        });
+
+        await prisma.comment.create({
+          data: {
+            userId: adminUser.id,
+            noteId: pythonNote.id,
+            parentId: reply1.id,
+            content: 'Thanks for the feedback — I will add more exercises!',
+            isDeleted: false,
+            createdAt: new Date()
+          }
         });
       } catch (e) {
-        console.warn('⚠️ Reaction seeding warning:', e.message);
+        console.warn('⚠️ Reply creation skipped (schema mismatch):', e.message);
+      }
+
+      // extra top-level comment on React note if exists
+      const reactNote = await prisma.note.findFirst({ where: { slug: 'react-hooks-reference' } });
+      if (reactNote) {
+        try {
+          await prisma.comment.create({
+            data: {
+              userId: testUser.id,
+              noteId: reactNote.id,
+              content: 'Can you provide more advanced resources?',
+              isDeleted: false,
+              createdAt: new Date()
+            }
+          });
+        } catch (e) {
+          console.warn('⚠️ Additional comment skipped (schema mismatch):', e.message);
+        }
+      }
+
+      // comment reactions using CommentReaction model (client: commentReaction)
+      if (prisma.commentReaction) {
+        try {
+          await prisma.commentReaction.createMany({
+            data: [
+              { userId: regularUser.id, commentId: comment1.id, type: 'LIKE' },
+              { userId: testUser.id, commentId: comment1.id, type: 'LIKE' }
+            ]
+          });
+        } catch (e) {
+          console.warn('⚠️ Reaction seeding warning:', e.message);
+        }
       }
     }
   } catch (e) {
     console.warn('⚠️ Comment seeding skipped (schema likely uses different fields). Error:', e.message);
-    console.warn('ℹ️ If your comment model uses `resourceType/resourceId`, `noteId`, or `videoId`, update the seed to match those fields.');
   }
 
   console.log('✅ Comments and reactions attempted');
+
 
   // =====================================
   // DISCOUNTS (optional - created if model exists)
