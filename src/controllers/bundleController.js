@@ -452,17 +452,27 @@ const getBundles = async (req, res) => {
 };
 
 // Get Single Bundle Details
+// Get Single Bundle Details (hardened)
 const getBundleById = async (req, res) => {
   try {
+    console.log('⚙️ getBundleById - req.params:', req.params);
+
     const { bundleId } = req.params;
-    const userId = req.user?.id;
+    if (!bundleId) {
+      return res.status(400).json({ error: 'bundleId param is required' });
+    }
+
+    const bundleIdNum = Number(bundleId);
+    if (!Number.isInteger(bundleIdNum) || bundleIdNum <= 0) {
+      return res.status(400).json({ error: 'Invalid bundleId parameter' });
+    }
+
+    const userId = req.user?.id ?? null;
 
     const bundle = await prisma.bundle.findUnique({
-      where: { id: parseInt(bundleId) },
+      where: { id: bundleIdNum },
       include: {
-        user: {
-          select: { id: true, name: true, email: true, role: true }
-        },
+        user: { select: { id: true, name: true, email: true, role: true } },
         courseItems: {
           include: {
             course: {
@@ -474,18 +484,11 @@ const getBundleById = async (req, res) => {
                 isPaid: true,
                 imageUrl: true,
                 category: { select: { name: true } },
+                // keep modules shallow to avoid huge payloads
                 modules: {
                   select: {
                     id: true,
-                    title: true,
-                    chapters: {
-                      select: {
-                        id: true,
-                        title: true,
-                        type: true,
-                        duration: true
-                      }
-                    }
+                    title: true
                   }
                 }
               }
@@ -501,22 +504,7 @@ const getBundleById = async (req, res) => {
                 description: true,
                 price: true,
                 isFree: true,
-                course: {
-                  select: {
-                    id: true,
-                    title: true,
-                    imageUrl: true,
-                    category: { select: { name: true } }
-                  }
-                },
-                chapters: {
-                  select: {
-                    id: true,
-                    title: true,
-                    type: true,
-                    duration: true
-                  }
-                }
+                course: { select: { id: true, title: true, imageUrl: true } }
               }
             }
           }
@@ -524,11 +512,7 @@ const getBundleById = async (req, res) => {
         purchases: {
           take: 10,
           orderBy: { createdAt: 'desc' },
-          include: {
-            user: {
-              select: { id: true, name: true }
-            }
-          }
+          include: { user: { select: { id: true, name: true } } }
         }
       }
     });
@@ -537,73 +521,53 @@ const getBundleById = async (req, res) => {
       return res.status(404).json({ error: 'Bundle not found' });
     }
 
-    // Check if bundle is accessible to user
-    const user = userId ? await prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true }
-    }) : null;
-
+    // permission checks
+    const user = userId
+      ? await prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
+      : null;
     const userIsAdmin = user && isUserAdmin(user);
     const isOwner = bundle.userId === userId;
-    
-    // If not public, check if user can access it
+
     if (!bundle.isPublic && !userIsAdmin && !isOwner) {
       return res.status(403).json({ error: 'Bundle not accessible' });
     }
 
+    // purchased / ownership checks
     let isPurchased = false;
     let userOwnsItems = false;
-
     if (userId) {
-      // Check if user purchased this bundle
-      const purchase = await prisma.bundlePurchase.findFirst({
-        where: { bundleId: bundle.id, userId }
-      });
+      const purchase = await prisma.bundlePurchase.findFirst({ where: { bundleId: bundle.id, userId } });
       isPurchased = !!purchase;
 
-      // Check if user owns individual items
       if (!isPurchased) {
-        if (bundle.type === 'COURSE' && bundle.courseItems.length > 0) {
-          const courseIds = bundle.courseItems.map(item => item.course.id);
-          const enrollments = await prisma.enrollment.findMany({
-            where: { userId, courseId: { in: courseIds } }
-          });
+        if (bundle.type === 'COURSE' && bundle.courseItems?.length) {
+          const courseIds = bundle.courseItems.map(i => i.course.id);
+          const enrollments = await prisma.enrollment.findMany({ where: { userId, courseId: { in: courseIds } } });
           userOwnsItems = enrollments.length > 0;
-        } else if (bundle.type === 'MODULE' && bundle.moduleItems.length > 0) {
-          const moduleIds = bundle.moduleItems.map(item => item.module.id);
-          const moduleEnrollments = await prisma.moduleEnrollment.findMany({
-            where: { userId, moduleId: { in: moduleIds } }
-          });
+        } else if (bundle.type === 'MODULE' && bundle.moduleItems?.length) {
+          const moduleIds = bundle.moduleItems.map(i => i.module.id);
+          const moduleEnrollments = await prisma.moduleEnrollment.findMany({ where: { userId, moduleId: { in: moduleIds } } });
           userOwnsItems = moduleEnrollments.length > 0;
         }
       }
     }
 
-    // Calculate metrics
+    // simple metrics
     let totalItems = 0;
     let individualTotal = 0;
-
     if (bundle.type === 'COURSE') {
       totalItems = bundle.courseItems.length;
-      individualTotal = bundle.courseItems.reduce((sum, item) => {
-        return sum + (item.course.isPaid ? item.course.price : 0);
-      }, 0);
+      individualTotal = bundle.courseItems.reduce((s, item) => s + (item.course?.isPaid ? (item.course.price || 0) : 0), 0);
     } else {
       totalItems = bundle.moduleItems.length;
-      individualTotal = bundle.moduleItems.reduce((sum, item) => {
-        return sum + (!item.module.isFree ? item.module.price : 0);
-      }, 0);
+      individualTotal = bundle.moduleItems.reduce((s, item) => s + (!item.module?.isFree ? (item.module.price || 0) : 0), 0);
     }
 
-    const savings = individualTotal - bundle.finalPrice;
+    const savings = individualTotal - (bundle.finalPrice || 0);
     const savingsPercentage = individualTotal > 0 ? Math.round((savings / individualTotal) * 100) : 0;
 
-    // Increment view count (only if not the owner)
     if (userId && userId !== bundle.userId) {
-      await prisma.bundle.update({
-        where: { id: bundle.id },
-        data: { viewCount: { increment: 1 } }
-      });
+      await prisma.bundle.update({ where: { id: bundle.id }, data: { viewCount: { increment: 1 } } });
     }
 
     const enhancedBundle = {
@@ -617,17 +581,10 @@ const getBundleById = async (req, res) => {
       recentPurchases: bundle.purchases
     };
 
-    res.json({
-      success: true,
-      bundle: enhancedBundle
-    });
-
+    return res.json({ success: true, bundle: enhancedBundle });
   } catch (error) {
     console.error('❌ Bundle details error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch bundle details',
-      details: error.message
-    });
+    return res.status(500).json({ error: 'Failed to fetch bundle details', details: error.message });
   }
 };
 
@@ -771,16 +728,35 @@ const deleteBundle = async (req, res) => {
 };
 
 // Purchase Bundle
+// src/controllers/bundleController.js (replace existing purchaseBundle)
 const purchaseBundle = async (req, res) => {
   try {
-    const { bundleId } = req.body;
-    const userId = req.user.id;
+    const { bundleId, paymentTransactionId, finalPrice } = req.body;
+    const userId = req.user?.id;
 
+    // ---- Basic validation ----
+    if (!userId) return res.status(401).json({ error: 'Authentication required' });
+    if (!bundleId) return res.status(400).json({ error: 'bundleId is required' });
+
+    // Require a valid transaction id (prevents accidental creations)
+    if (!paymentTransactionId || typeof paymentTransactionId !== 'string' || paymentTransactionId.trim() === '') {
+      console.warn('Blocked purchase attempt: missing paymentTransactionId', { userId, bundleId, ip: req.ip });
+      return res.status(400).json({ error: 'paymentTransactionId is required' });
+    }
+
+    // Require a positive final price (prevents zero/undefined price creations)
+    const priceNum = Number(finalPrice ?? 0);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      console.warn('Blocked purchase attempt: invalid finalPrice', { userId, bundleId, finalPrice, ip: req.ip });
+      return res.status(400).json({ error: 'finalPrice must be a positive number' });
+    }
+
+    // ---- Load bundle safely ----
     const bundle = await prisma.bundle.findUnique({
-      where: { id: parseInt(bundleId) },
+      where: { id: parseInt(bundleId, 10) },
       include: {
-        courseItems: { include: { course: { select: { id: true, title: true, price: true } } } },
-        moduleItems: { include: { module: { select: { id: true, title: true, price: true } } } }
+        courseItems: { include: { course: { select: { id: true, title: true, price: true, isPaid: true } } } },
+        moduleItems: { include: { module: { select: { id: true, title: true, price: true, isFree: true } } } }
       }
     });
 
@@ -788,54 +764,81 @@ const purchaseBundle = async (req, res) => {
       return res.status(404).json({ error: 'Bundle not found or not available' });
     }
 
-    // Check if already purchased
+    // ---- Prevent accidental signup-triggered purchases ----
+    // Fetch user createdAt (protect against a purchase immediately after signup)
+    const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true } });
+    if (userRecord) {
+      const accountAgeMs = Date.now() - new Date(userRecord.createdAt).getTime();
+      const MIN_ACCOUNT_AGE_MS = 5 * 1000; // 5 seconds, adjust as needed (you might choose 30s or 60s)
+      if (accountAgeMs < MIN_ACCOUNT_AGE_MS) {
+        console.warn('Blocked purchase: account too new', { userId, bundleId, accountAgeMs });
+        return res.status(400).json({ error: 'Account is too new to make purchases (possible automated signup). Try again.' });
+      }
+    }
+
+    // ---- Idempotency check: same transaction might be retrying ----
+    const existingTx = await prisma.bundlePurchase.findFirst({
+      where: { paymentTransactionId }
+    });
+    if (existingTx) {
+      console.warn('Blocked purchase: duplicate paymentTransactionId', { userId, bundleId, paymentTransactionId });
+      return res.status(409).json({ error: 'This transaction has already been processed' });
+    }
+
+    // ---- Check if user already purchased this bundle ----
     const existingPurchase = await prisma.bundlePurchase.findFirst({
       where: { bundleId: bundle.id, userId }
     });
-
     if (existingPurchase) {
       return res.status(400).json({ error: 'You have already purchased this bundle' });
     }
 
-    // Process purchase
-    await prisma.$transaction(async (tx) => {
-      // Create purchase record
-      await tx.bundlePurchase.create({
+    // ---- Process purchase inside transaction ----
+    const createdPurchase = await prisma.$transaction(async (tx) => {
+      // Create purchase record with required fields only
+      const bp = await tx.bundlePurchase.create({
         data: {
           bundleId: bundle.id,
           userId,
-          purchasePrice: bundle.totalPrice,
-          discount: bundle.discount,
-          finalPrice: bundle.finalPrice,
+          paymentTransactionId,
+          purchasePrice: bundle.totalPrice ?? priceNum,
+          discount: bundle.discount ?? 0,
+          finalPrice: priceNum,
           bundleType: bundle.type,
-          itemCount: bundle.type === 'COURSE' ? bundle.courseItems.length : bundle.moduleItems.length
+          itemCount: bundle.type === 'COURSE' ? bundle.courseItems.length : bundle.moduleItems.length,
+          // createdAt will be set by DB default
         }
       });
 
-      // Enroll user in items
+      // Enroll user in items and include the same paymentTransactionId for traceability
       if (bundle.type === 'COURSE') {
         const enrollmentData = bundle.courseItems.map(item => ({
           userId,
           courseId: item.course.id,
-          paymentTransactionId: `bundle_${bundle.id}_${Date.now()}`
+          paymentTransactionId
         }));
 
-        await tx.enrollment.createMany({
-          data: enrollmentData,
-          skipDuplicates: true
-        });
+        // Use createMany with skipDuplicates to avoid duplicate enrollments
+        if (enrollmentData.length) {
+          await tx.enrollment.createMany({
+            data: enrollmentData,
+            skipDuplicates: true
+          });
+        }
       } else {
         const moduleEnrollmentData = bundle.moduleItems.map(item => ({
           userId,
           moduleId: item.module.id,
-          purchasePrice: item.module.price,
-          paymentTransactionId: `bundle_${bundle.id}_${Date.now()}`
+          purchasePrice: item.module.price ?? 0,
+          paymentTransactionId
         }));
 
-        await tx.moduleEnrollment.createMany({
-          data: moduleEnrollmentData,
-          skipDuplicates: true
-        });
+        if (moduleEnrollmentData.length) {
+          await tx.moduleEnrollment.createMany({
+            data: moduleEnrollmentData,
+            skipDuplicates: true
+          });
+        }
       }
 
       // Update bundle analytics
@@ -843,29 +846,34 @@ const purchaseBundle = async (req, res) => {
         where: { id: bundle.id },
         data: {
           salesCount: { increment: 1 },
-          revenue: { increment: bundle.finalPrice }
+          revenue: { increment: priceNum }
         }
       });
+
+      return bp;
     });
 
-    res.json({
+    // ---- Respond with created purchase ----
+    return res.json({
       success: true,
       message: 'Bundle purchased successfully!',
       purchase: {
-        bundleId: bundle.id,
-        finalPrice: bundle.finalPrice,
-        itemsEnrolled: bundle.type === 'COURSE' ? bundle.courseItems.length : bundle.moduleItems.length
+        id: createdPurchase.id,
+        bundleId: createdPurchase.bundleId,
+        finalPrice: createdPurchase.finalPrice,
+        itemCount: createdPurchase.itemCount
       }
     });
 
   } catch (error) {
     console.error('❌ Bundle purchase error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({
       error: 'Failed to process bundle purchase',
       details: error.message
     });
   }
 };
+
 
 const getFeaturedBundles = async (req, res) => {
   console.log('🔍 BUNDLE ROUTE: GET /api/bundles/featured?limit=', req.query.limit);
@@ -971,7 +979,7 @@ const getFeaturedBundles = async (req, res) => {
 
     res.status(200).json({ data: bundles });
   } catch (error) {
-    console.error('❌ Error fetching featured bundles:', error);
+    console.error(' Error fetching featured bundles:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch featured bundles' });
   }
 };
