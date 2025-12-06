@@ -1,3 +1,4 @@
+// src/server.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -7,6 +8,19 @@ const fs = require('fs');
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+
+// IMPORTANT: load serverless wrapper only when needed
+let serverless;
+const isServerless = !!process.env.VERCEL || !!process.env.FUNCTIONS_WORKER_RUNTIME;
+
+try {
+  if (isServerless) {
+    serverless = require('serverless-http');
+  }
+} catch (err) {
+  // serverless-http may not be installed locally in some environments
+  console.warn('serverless-http not available:', err.message);
+}
 
 const authRoutes = require('./routes/authRoutes');
 const protectedRoutes = require('./routes/protectedRoutes');
@@ -22,7 +36,7 @@ const adminModuleRoutes = require('./routes/admin/moduleAdminRoutes');
 const adminDashboardRoutes = require('./routes/admin/dashboardAdminRoutes');
 const adminEnrollmentRoutes = require('./routes/admin/enrollmentAdminRoutes');
 const adminUserRoutes = require('./routes/admin/userAdminRoutes');
-const orderRoutes = require("./routes/orderRoutes");
+const orderRoutes = require('./routes/orderRoutes');
 
 const videoRoutes = require('./routes/videoRoutes');
 const progressRoutes = require('./routes/progressRoutes');
@@ -39,29 +53,43 @@ const bundleAdminRoutes = require('./routes/admin/bundleAdminRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const discountRoutes = require('./routes/discountRoutes');
 
-const startOrderCleanupJob = require('./cron/orderCleanupJob');
-startOrderCleanupJob();
+// NOTE: Do NOT run background cron jobs in serverless environment.
+// Start cron job only when running as a long-lived server (local).
+if (!isServerless) {
+  const startOrderCleanupJob = require('./cron/orderCleanupJob');
+  startOrderCleanupJob();
+} else {
+  console.log('⚠️ Running in serverless environment — cron jobs are disabled.');
+}
 
-const passport = require('./passportConfig'); 
+const passport = require('./passportConfig');
 
 const app = express();
 
-const uploadDirs = [
-  '../uploads',
-  '../uploads/videos',
-  '../uploads/videos/thumbnails',
-];
+// Create uploads directories only in non-serverless (local) environment
+if (!isServerless) {
+  const uploadDirs = [
+    path.join(__dirname, '../uploads'),
+    path.join(__dirname, '../uploads/videos'),
+    path.join(__dirname, '../uploads/videos/thumbnails'),
+  ];
 
-uploadDirs.forEach((dir) => {
-  const fullPath = path.join(__dirname, dir);
-  if (!fs.existsSync(fullPath)) {
-    fs.mkdirSync(fullPath, { recursive: true });
-    console.log(`Created directory: ${fullPath}`);
-  }
-});
+  uploadDirs.forEach((dir) => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`Created directory: ${dir}`);
+    }
+  });
 
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+  app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+} else {
+  // In serverless, we serve uploads only if you mount a cloud storage proxy. For now respond with 404.
+  app.get('/uploads/*', (req, res) => {
+    res.status(404).json({ error: 'Uploads not available in serverless environment. Use cloud storage.' });
+  });
+}
 
+// Webhook route should remain as-is (some providers require external endpoint)
 app.use('/webhook', webhookRoutes);
 
 app.use(
@@ -76,6 +104,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 app.use(passport.initialize()); // Initialize Passport
 
+// ROUTES
 app.use('/api/auth', authRoutes);
 app.use('/api/protected', protectedRoutes);
 app.use('/api/users', userRoutes);
@@ -109,7 +138,6 @@ app.use('/api/admin/chapters', chapterAdminRoutes);
 app.get('/api/me', requireAuth, (req, res) => {
   try {
     console.log('GET /api/me - User from token:', req.user);
-
     res.status(200).json({
       id: req.user.userId,
       role: req.user.role,
@@ -126,13 +154,10 @@ app.get('/', (req, res) => {
   res.send('Backend is running');
 });
 
+// Error handlers
 app.use((error, req, res, next) => {
   console.error('Server error:', error);
-
-  if (res.headersSent) {
-    return next(error);
-  }
-
+  if (res.headersSent) return next(error);
   res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
@@ -146,11 +171,30 @@ app.use('*', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📱 Frontend URL: http://localhost:3000`);
-  console.log(`⚡ API URL: http://localhost:${PORT}/api`);
-  console.log(`Uploads directory: ${path.join(__dirname, 'uploads')}`);
-  console.log(`Video uploads available at: http://localhost:${PORT}/uploads/videos/`);
-});
+// Graceful shutdown for local server
+async function shutdown() {
+  console.log('Shutting down server, disconnecting Prisma...');
+  try {
+    await prisma.$disconnect();
+    console.log('Prisma disconnected');
+  } catch (err) {
+    console.error('Error disconnecting Prisma', err);
+  }
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+// If running serverless (Vercel), export the handler; otherwise start a long-lived server locally.
+if (isServerless && serverless) {
+  console.log('Running in serverless mode — exporting handler for platform.');
+  module.exports = serverless(app);
+} else {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📱 Frontend URL: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
+    console.log(`⚡ API URL: http://localhost:${PORT}/api`);
+    console.log(`Uploads directory: ${path.join(__dirname, '../uploads')}`);
+  });
+}
