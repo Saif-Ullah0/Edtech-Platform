@@ -6,22 +6,12 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 
+const serverless = require('serverless-http'); // <- required for Vercel serverless handler
+
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// IMPORTANT: load serverless wrapper only when needed
-let serverless;
-const isServerless = !!process.env.VERCEL || !!process.env.FUNCTIONS_WORKER_RUNTIME;
-
-try {
-  if (isServerless) {
-    serverless = require('serverless-http');
-  }
-} catch (err) {
-  // serverless-http may not be installed locally in some environments
-  console.warn('serverless-http not available:', err.message);
-}
-
+// ----- ROUTES & CONTROLLERS -----
 const authRoutes = require('./routes/authRoutes');
 const protectedRoutes = require('./routes/protectedRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -36,7 +26,7 @@ const adminModuleRoutes = require('./routes/admin/moduleAdminRoutes');
 const adminDashboardRoutes = require('./routes/admin/dashboardAdminRoutes');
 const adminEnrollmentRoutes = require('./routes/admin/enrollmentAdminRoutes');
 const adminUserRoutes = require('./routes/admin/userAdminRoutes');
-const orderRoutes = require('./routes/orderRoutes');
+const orderRoutes = require("./routes/orderRoutes");
 
 const videoRoutes = require('./routes/videoRoutes');
 const progressRoutes = require('./routes/progressRoutes');
@@ -53,25 +43,25 @@ const bundleAdminRoutes = require('./routes/admin/bundleAdminRoutes');
 const commentRoutes = require('./routes/commentRoutes');
 const discountRoutes = require('./routes/discountRoutes');
 
-// NOTE: Do NOT run background cron jobs in serverless environment.
-// Start cron job only when running as a long-lived server (local).
-if (!isServerless) {
-  const startOrderCleanupJob = require('./cron/orderCleanupJob');
-  startOrderCleanupJob();
-} else {
-  console.log('⚠️ Running in serverless environment — cron jobs are disabled.');
-}
+const startOrderCleanupJob = require('./cron/orderCleanupJob');
 
 const passport = require('./passportConfig');
 
 const app = express();
 
-// Create uploads directories only in non-serverless (local) environment
-if (!isServerless) {
+// -----------------------------
+// IMPORTANT: Only run these operations locally (not on Vercel)
+// Vercel sets process.env.VERCEL = '1' — also check NODE_ENV
+// -----------------------------
+const IS_VERCEL = !!process.env.VERCEL; // true on Vercel
+const IS_PROD = process.env.NODE_ENV === 'production' || IS_VERCEL;
+
+// Create upload directories only when running locally or on a server with a writable FS
+if (!IS_VERCEL) {
   const uploadDirs = [
-    path.join(__dirname, '../uploads'),
-    path.join(__dirname, '../uploads/videos'),
-    path.join(__dirname, '../uploads/videos/thumbnails'),
+    path.join(__dirname, '..', 'uploads'),
+    path.join(__dirname, '..', 'uploads', 'videos'),
+    path.join(__dirname, '..', 'uploads', 'videos', 'thumbnails'),
   ];
 
   uploadDirs.forEach((dir) => {
@@ -81,15 +71,15 @@ if (!isServerless) {
     }
   });
 
-  app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+  // Serve uploads locally for dev
+  app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 } else {
-  // In serverless, we serve uploads only if you mount a cloud storage proxy. For now respond with 404.
-  app.get('/uploads/*', (req, res) => {
-    res.status(404).json({ error: 'Uploads not available in serverless environment. Use cloud storage.' });
-  });
+  // On Vercel we should not try to create or serve local uploads
+  // Consider using cloud storage (Supabase Storage / S3 / Cloudinary) for uploads
+  console.log('Running on Vercel — local uploads disabled; use cloud storage.');
 }
 
-// Webhook route should remain as-is (some providers require external endpoint)
+// Webhook should still be reachable; note: external webhooks must call your Vercel URL
 app.use('/webhook', webhookRoutes);
 
 app.use(
@@ -102,7 +92,7 @@ app.use(
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
-app.use(passport.initialize()); // Initialize Passport
+app.use(passport.initialize()); // Passport init (safe for serverless)
 
 // ROUTES
 app.use('/api/auth', authRoutes);
@@ -138,10 +128,7 @@ app.use('/api/admin/chapters', chapterAdminRoutes);
 app.get('/api/me', requireAuth, (req, res) => {
   try {
     console.log('GET /api/me - User from token:', req.user);
-    res.status(200).json({
-      id: req.user.userId,
-      role: req.user.role,
-    });
+    res.status(200).json({ id: req.user.userId, role: req.user.role });
   } catch (error) {
     console.error('Get current user error:', error);
     res.status(500).json({ error: 'Failed to get user data' });
@@ -154,13 +141,13 @@ app.get('/', (req, res) => {
   res.send('Backend is running');
 });
 
-// Error handlers
+// Error handler
 app.use((error, req, res, next) => {
   console.error('Server error:', error);
   if (res.headersSent) return next(error);
   res.status(500).json({
     error: 'Internal server error',
-    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
+    message: IS_PROD ? 'Something went wrong' : error.message,
   });
 });
 
@@ -171,30 +158,32 @@ app.use('*', (req, res) => {
   });
 });
 
-// Graceful shutdown for local server
-async function shutdown() {
-  console.log('Shutting down server, disconnecting Prisma...');
+// -----------------------------
+// Start cron job only when running locally or on a server (not serverless)
+// -----------------------------
+if (!IS_VERCEL) {
   try {
-    await prisma.$disconnect();
-    console.log('Prisma disconnected');
+    startOrderCleanupJob();
+    console.log('Order cleanup cron started (local only)');
   } catch (err) {
-    console.error('Error disconnecting Prisma', err);
+    console.warn('Could not start order cleanup job locally:', err);
   }
-  process.exit(0);
-}
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
-
-// If running serverless (Vercel), export the handler; otherwise start a long-lived server locally.
-if (isServerless && serverless) {
-  console.log('Running in serverless mode — exporting handler for platform.');
-  module.exports = serverless(app);
 } else {
+  console.log('Skipping cron start on Vercel (serverless environment)');
+}
+
+// -----------------------------
+// Local listen (only when not running serverless on Vercel)
+// -----------------------------
+if (!IS_VERCEL) {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📱 Frontend URL: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
     console.log(`⚡ API URL: http://localhost:${PORT}/api`);
-    console.log(`Uploads directory: ${path.join(__dirname, '../uploads')}`);
   });
 }
+
+// Export serverless handler for Vercel (and other serverless platforms)
+module.exports = app;              // keep for unit tests or import
+module.exports.handler = serverless(app);
